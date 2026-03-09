@@ -1,0 +1,40 @@
+{
+  "id": "task-noa-tools",
+  "uiHints": {
+    "baseUrl": {
+      "label": "Task-Noa Base URL",
+      "placeholder": "http://127.0.0.1:3000"
+    },
+    "apiToken": {
+      "label": "Task-Noa API Token",
+      "sensitive": true
+    },
+    "timeoutMs": {
+      "label": "Request Timeout (ms)"
+    },
+    "defaultCurrency": {
+      "label": "Default Currency"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "baseUrl": {
+        "type": "string"
+      },
+      "apiToken": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "number"
+      },
+      "defaultCurrency": {
+        "type": "string"
+      }
+    }
+  }
+}

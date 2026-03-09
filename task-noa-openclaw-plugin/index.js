@@ -1,0 +1,229 @@
+const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_CURRENCY = "JPY";
+
+const pluginConfigSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    baseUrl: { type: "string" },
+    apiToken: { type: "string" },
+    timeoutMs: { type: "number" },
+    defaultCurrency: { type: "string" }
+  }
+};
+
+function toJsonResult(payload) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(payload, null, 2)
+      }
+    ],
+    details: payload
+  };
+}
+
+function normalizeBaseUrl(value) {
+  const fallback = process.env.TASK_NOA_BASE_URL;
+  const resolved = typeof value === "string" && value.trim() ? value : fallback;
+  if (typeof resolved !== "string" || !resolved.trim()) {
+    throw new Error("task-noa plugin requires config.baseUrl");
+  }
+  return resolved.replace(/\/+$/, "");
+}
+
+function readTimeoutMs(value) {
+  if (typeof value === "number" && value > 0) {
+    return value;
+  }
+  const fallback = Number(process.env.TASK_NOA_TIMEOUT_MS);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : DEFAULT_TIMEOUT_MS;
+}
+
+function readApiToken(value) {
+  const fallback = process.env.TASK_NOA_API_TOKEN;
+  const resolved = typeof value === "string" && value.trim() ? value : fallback;
+  if (typeof resolved !== "string" || !resolved.trim()) {
+    throw new Error("task-noa plugin requires config.apiToken");
+  }
+  return resolved.trim();
+}
+
+function buildUrl(baseUrl, pathName, params) {
+  const url = new URL(`${baseUrl}${pathName}`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    url.searchParams.set(key, String(value));
+  }
+  return url;
+}
+
+async function fetchJson({ baseUrl, apiToken, pathName, params, timeoutMs }) {
+  const url = buildUrl(baseUrl, pathName, params);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        Accept: "application/json"
+      },
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      payload = { raw: text };
+    }
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string"
+          ? payload.error
+          : `Task-Noa API request failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return payload;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function createTaskNoaTool({ name, description, pathName, buildParams, resultLabel }) {
+  return (api) => ({
+    name,
+    description,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: buildParams.schema,
+      required: buildParams.required ?? []
+    },
+    async execute(_callId, params) {
+      const cfg = api.pluginConfig ?? {};
+      const baseUrl = normalizeBaseUrl(cfg.baseUrl);
+      const apiToken = readApiToken(cfg.apiToken);
+      const timeoutMs = readTimeoutMs(cfg.timeoutMs);
+      const payload = await fetchJson({
+        baseUrl,
+        apiToken,
+        pathName,
+        params: buildParams.map(params),
+        timeoutMs
+      });
+
+      const defaultCurrency =
+        typeof cfg.defaultCurrency === "string" && cfg.defaultCurrency.trim()
+          ? cfg.defaultCurrency.trim()
+          : typeof process.env.TASK_NOA_DEFAULT_CURRENCY === "string" &&
+              process.env.TASK_NOA_DEFAULT_CURRENCY.trim()
+            ? process.env.TASK_NOA_DEFAULT_CURRENCY.trim()
+          : DEFAULT_CURRENCY;
+
+      if (payload && typeof payload === "object" && !Array.isArray(payload) && !payload.currency) {
+        payload.currency = defaultCurrency;
+      }
+
+      return toJsonResult({
+        tool: resultLabel,
+        ok: true,
+        data: payload
+      });
+    }
+  });
+}
+
+const tools = [
+  createTaskNoaTool({
+    name: "get_monthly_sales",
+    description: "Task-Noa から月次売上サマリを取得する。",
+    pathName: "/api/ai/sales-summary",
+    resultLabel: "monthly_sales",
+    buildParams: {
+      schema: {
+        period: {
+          type: "string",
+          description: "対象月。YYYY-MM。省略時は当月。"
+        }
+      },
+      map: (params) => ({
+        period: typeof params.period === "string" ? params.period : undefined
+      })
+    }
+  }),
+  createTaskNoaTool({
+    name: "get_unpaid_invoices",
+    description: "Task-Noa から未回収請求サマリを取得する。",
+    pathName: "/api/ai/unpaid-invoices",
+    resultLabel: "unpaid_invoices",
+    buildParams: {
+      schema: {
+        as_of: {
+          type: "string",
+          description: "基準日。YYYY-MM-DD。省略時は今日。"
+        }
+      },
+      map: (params) => ({
+        as_of: typeof params.as_of === "string" ? params.as_of : undefined
+      })
+    }
+  }),
+  createTaskNoaTool({
+    name: "get_cash_balance",
+    description: "Task-Noa から月次資金繰りサマリを取得する。",
+    pathName: "/api/ai/cashflow",
+    resultLabel: "cashflow",
+    buildParams: {
+      schema: {
+        period: {
+          type: "string",
+          description: "対象月。YYYY-MM。省略時は当月。"
+        }
+      },
+      map: (params) => ({
+        period: typeof params.period === "string" ? params.period : undefined
+      })
+    }
+  }),
+  createTaskNoaTool({
+    name: "get_recent_journals",
+    description: "Task-Noa から最近の仕訳一覧を取得する。",
+    pathName: "/api/ai/recent-journals",
+    resultLabel: "recent_journals",
+    buildParams: {
+      schema: {
+        limit: {
+          type: "number",
+          description: "件数。省略時は20。最大100。"
+        }
+      },
+      map: (params) => ({
+        limit: typeof params.limit === "number" ? params.limit : undefined
+      })
+    }
+  })
+];
+
+const plugin = {
+  id: "task-noa-tools",
+  name: "Task-Noa Tools",
+  description: "Task-Noa AI API bridge for Openclaw.",
+  configSchema: pluginConfigSchema,
+  register(api) {
+    for (const build of tools) {
+      api.registerTool(build(api), { optional: true });
+    }
+  }
+};
+
+export default plugin;
