@@ -211,8 +211,118 @@ const tools = [
         limit: typeof params.limit === "number" ? params.limit : undefined
       })
     }
+  }),
+  createTaskNoaTool({
+    name: "list_recent_captures",
+    description: "Task-Noa に保存された最新 capture 一覧を取得する。",
+    pathName: "/api/ai/captures",
+    resultLabel: "recent_captures",
+    buildParams: {
+      schema: {
+        entity_type: {
+          type: "string",
+          description: "対象 entity_type。journal_entries / invoices / sales_summary。省略時は全件。"
+        },
+        limit: {
+          type: "number",
+          description: "件数。省略時は20。最大100。"
+        }
+      },
+      map: (params) => ({
+        entity_type: typeof params.entity_type === "string" ? params.entity_type : undefined,
+        limit: typeof params.limit === "number" ? params.limit : undefined
+      })
+    }
+  }),
+  createTaskNoaTool({
+    name: "get_capture_by_id",
+    description: "Task-Noa に保存された capture を ID 指定で取得する。",
+    pathName: "/api/ai/captures",
+    resultLabel: "capture_by_id",
+    buildParams: {
+      schema: {
+        capture_id: {
+          type: "string",
+          description: "取得したい capture_id。"
+        }
+      },
+      required: ["capture_id"],
+      map: (params) => ({}),
+    }
+  }),
+  createTaskNoaTool({
+    name: "get_latest_capture_by_entity_type",
+    description: "Task-Noa に保存された特定 entity_type の最新 capture を取得する。",
+    pathName: "/api/ai/captures",
+    resultLabel: "latest_capture_by_entity_type",
+    buildParams: {
+      schema: {
+        entity_type: {
+          type: "string",
+          description: "対象 entity_type。journal_entries / invoices / sales_summary。"
+        }
+      },
+      required: ["entity_type"],
+      map: (params) => ({
+        entity_type: typeof params.entity_type === "string" ? params.entity_type : undefined,
+        limit: 1
+      })
+    }
   })
 ];
+
+const specialExecutors = {
+  async get_capture_by_id(api, params) {
+    const cfg = api.pluginConfig ?? {};
+    const baseUrl = normalizeBaseUrl(cfg.baseUrl);
+    const apiToken = readApiToken(cfg.apiToken);
+    const timeoutMs = readTimeoutMs(cfg.timeoutMs);
+    const captureId = typeof params.capture_id === "string" ? params.capture_id.trim() : "";
+    if (!captureId) {
+      throw new Error("capture_id is required");
+    }
+    const payload = await fetchJson({
+      baseUrl,
+      apiToken,
+      pathName: `/api/ai/captures/${encodeURIComponent(captureId)}`,
+      params: {},
+      timeoutMs
+    });
+    return toJsonResult({
+      tool: "capture_by_id",
+      ok: true,
+      data: payload
+    });
+  },
+  async get_latest_capture_by_entity_type(api, params) {
+    const cfg = api.pluginConfig ?? {};
+    const baseUrl = normalizeBaseUrl(cfg.baseUrl);
+    const apiToken = readApiToken(cfg.apiToken);
+    const timeoutMs = readTimeoutMs(cfg.timeoutMs);
+    const entityType = typeof params.entity_type === "string" ? params.entity_type.trim() : "";
+    if (!entityType) {
+      throw new Error("entity_type is required");
+    }
+    const payload = await fetchJson({
+      baseUrl,
+      apiToken,
+      pathName: "/api/ai/captures",
+      params: {
+        entity_type: entityType,
+        limit: 1
+      },
+      timeoutMs
+    });
+    const latestCapture =
+      payload && typeof payload === "object" && Array.isArray(payload.items) ? payload.items[0] ?? null : null;
+    return toJsonResult({
+      tool: "latest_capture_by_entity_type",
+      ok: true,
+      data: latestCapture,
+      source_list: payload
+    });
+  }
+};
 
 const plugin = {
   id: "task-noa-tools",
@@ -221,7 +331,21 @@ const plugin = {
   configSchema: pluginConfigSchema,
   register(api) {
     for (const build of tools) {
-      api.registerTool(build(api), { optional: true });
+      const tool = build(api);
+      if (specialExecutors[tool.name]) {
+        const execute = specialExecutors[tool.name];
+        api.registerTool(
+          {
+            ...tool,
+            async execute(callId, params) {
+              return execute(api, params, callId);
+            }
+          },
+          { optional: true }
+        );
+        continue;
+      }
+      api.registerTool(tool, { optional: true });
     }
   }
 };

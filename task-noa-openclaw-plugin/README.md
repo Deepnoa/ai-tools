@@ -8,6 +8,9 @@ Optional Openclaw plugin that bridges to Task-Noa's internal AI API.
 - `get_unpaid_invoices`
 - `get_cash_balance`
 - `get_recent_journals`
+- `list_recent_captures`
+- `get_capture_by_id`
+- `get_latest_capture_by_entity_type`
 
 ## Config
 
@@ -45,7 +48,10 @@ Agent allowlist example:
             "get_monthly_sales",
             "get_unpaid_invoices",
             "get_cash_balance",
-            "get_recent_journals"
+            "get_recent_journals",
+            "list_recent_captures",
+            "get_capture_by_id",
+            "get_latest_capture_by_entity_type"
           ]
         }
       }
@@ -53,6 +59,17 @@ Agent allowlist example:
   }
 }
 ```
+
+## Capture API expectations
+
+The capture-reading tools expect these internal Task-Noa routes:
+
+- `POST /api/ai/capture`
+- `GET /api/ai/captures`
+- `GET /api/ai/captures/:id`
+
+`list_recent_captures` and `get_latest_capture_by_entity_type` read from `GET /api/ai/captures`.
+`get_capture_by_id` reads from `GET /api/ai/captures/:id`.
 
 ## Install for dev
 
