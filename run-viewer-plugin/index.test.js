@@ -7,9 +7,12 @@ import path from "node:path";
 import plugin, {
   findRunById,
   formatRunId,
+  formatHealthSummary,
   formatRunDetail,
   handleRunsCommand,
   listRuns,
+  loadRunsForDate,
+  summarizeRunsHealth,
   writeRunRecord,
 } from "./index.js";
 
@@ -306,5 +309,122 @@ test("handleRunsCommand returns not-found for missing retry target", async () =>
     const result = await handleRunsCommand(makeContext(runsDir, "retry run_20260415_999999_zzz"));
 
     assert.match(result.text, /run が見つかりません: `run_20260415_999999_zzz`/);
+  });
+});
+
+test("loadRunsForDate returns newest runs for a specific date only", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260414_235959_aaa",
+        queued_at: "2026-04-14T23:59:59Z",
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260415_020111_aaa",
+        queued_at: "2026-04-15T02:01:11Z",
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260415_020112_aab",
+        queued_at: "2026-04-15T02:01:12Z",
+      }),
+    );
+
+    const runs = await loadRunsForDate(runsDir, "2026-04-15");
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0].run_id, "run_20260415_020112_aab");
+    assert.equal(runs[1].run_id, "run_20260415_020111_aaa");
+  });
+});
+
+test("summarizeRunsHealth aggregates counts and latest failed run", () => {
+  const runs = [
+    makeRecord({
+      run_id: "run_20260415_120003_ccc",
+      queued_at: "2026-04-15T12:00:03Z",
+      status: "failed",
+      result: null,
+      error: { message: "Sense worker 接続タイムアウト" },
+    }),
+    makeRecord({
+      run_id: "run_20260415_120002_bbb",
+      queued_at: "2026-04-15T12:00:02Z",
+      status: "running",
+      done_at: null,
+    }),
+    makeRecord({
+      run_id: "run_20260415_120001_aaa",
+      queued_at: "2026-04-15T12:00:01Z",
+      status: "done",
+    }),
+  ];
+
+  const summary = summarizeRunsHealth(runs, "2026-04-15");
+  assert.equal(summary.total, 3);
+  assert.equal(summary.counts.failed, 1);
+  assert.equal(summary.counts.running, 1);
+  assert.equal(summary.counts.done, 1);
+  assert.equal(summary.overallStatus, "degraded");
+  assert.equal(summary.latestFailed.run_id, "run_20260415_120003_ccc");
+});
+
+test("formatHealthSummary renders counts and latest failed run", () => {
+  const summary = summarizeRunsHealth([
+    makeRecord({
+      run_id: "run_20260415_120003_ccc",
+      queued_at: "2026-04-15T12:00:03Z",
+      kind: "digest",
+      status: "failed",
+      result: null,
+      error: { message: "Sense worker 接続タイムアウト" },
+    }),
+    makeRecord({
+      run_id: "run_20260415_120001_aaa",
+      queued_at: "2026-04-15T12:00:01Z",
+      status: "done",
+    }),
+  ], "2026-04-15");
+
+  const text = formatHealthSummary(summary);
+  assert.match(text, /\*run health \(2026-04-15\)\*/);
+  assert.match(text, /queued: 0 \| running: 0 \| done: 1 \| failed: 1 \| cancelled: 0/);
+  assert.match(text, /\*最新 failed:\* `run_20260415_120003_ccc` \(digest\)/);
+  assert.match(text, /エラー: Sense worker 接続タイムアウト/);
+});
+
+test("handleRunsCommand returns today's health summary", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const today = new Date().toISOString().slice(0, 10);
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: `run_${today.replaceAll("-", "")}_120003_ccc`,
+        queued_at: `${today}T12:00:03Z`,
+        kind: "digest",
+        status: "failed",
+        result: null,
+        error: { message: "Sense worker 接続タイムアウト" },
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: `run_${today.replaceAll("-", "")}_120001_aaa`,
+        queued_at: `${today}T12:00:01Z`,
+        status: "done",
+      }),
+    );
+
+    const result = await handleRunsCommand(makeContext(runsDir, "health"));
+
+    assert.match(result.text, /\*run health \(/);
+    assert.match(result.text, /failed: 1/);
+    assert.match(result.text, /run_.*120003_ccc/);
   });
 });

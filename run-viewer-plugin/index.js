@@ -25,6 +25,7 @@ import path from "node:path";
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
+const HEALTH_SCAN_LIMIT = 200;
 
 // ── Path resolution ────────────────────────────────────────────────────────────
 
@@ -102,6 +103,33 @@ async function writeRunRecord(runsDir, record) {
   await fs.rename(tempPath, filePath);
 
   return filePath;
+}
+
+/**
+ * Load runs for a specific YYYY-MM-DD date directory, newest first.
+ */
+async function loadRunsForDate(runsDir, dateStr, limit = HEALTH_SCAN_LIMIT) {
+  const dirPath = path.join(runsDir, dateStr);
+  let files;
+  try {
+    files = await fs.readdir(dirPath);
+  } catch {
+    return [];
+  }
+
+  const records = [];
+  const jsonFiles = files
+    .filter((file) => file.endsWith(".json") && !file.endsWith(".tmp"))
+    .sort()
+    .reverse();
+
+  for (const file of jsonFiles) {
+    if (records.length >= limit) break;
+    const record = await readRunFile(path.join(dirPath, file));
+    if (record) records.push(record);
+  }
+
+  return records;
 }
 
 /**
@@ -347,6 +375,71 @@ function formatRetryAccepted(originalRunId, retryRunId) {
   ].join("\n");
 }
 
+/**
+ * Build a minimal health summary from today's run store.
+ */
+function summarizeRunsHealth(runs, today) {
+  const counts = {
+    queued: 0,
+    running: 0,
+    done: 0,
+    failed: 0,
+    cancelled: 0,
+  };
+
+  let latestFailed = null;
+  for (const run of runs) {
+    const status = run.status;
+    if (status in counts) {
+      counts[status] += 1;
+    }
+    if (status === "failed" && latestFailed == null) {
+      latestFailed = run;
+    }
+  }
+
+  const overallStatus =
+    counts.failed > 0 ? "degraded"
+    : counts.running > 0 || counts.queued > 0 ? "active"
+    : "ok";
+
+  return {
+    date: today,
+    total: runs.length,
+    counts,
+    latestFailed,
+    overallStatus,
+  };
+}
+
+/**
+ * Format today's health summary as Slack-friendly text.
+ */
+function formatHealthSummary(summary) {
+  const lines = [];
+  const overallEmoji =
+    summary.overallStatus === "degraded" ? "⚠️"
+    : summary.overallStatus === "active" ? "🔄"
+    : "✅";
+
+  lines.push(`${overallEmoji} *run health (${summary.date})*`);
+  lines.push(
+    `queued: ${summary.counts.queued} | running: ${summary.counts.running} | done: ${summary.counts.done} | failed: ${summary.counts.failed} | cancelled: ${summary.counts.cancelled}`,
+  );
+  lines.push(`total: ${summary.total}`);
+
+  if (summary.latestFailed) {
+    lines.push("");
+    lines.push(`*最新 failed:* \`${summary.latestFailed.run_id}\` (${summary.latestFailed.kind ?? "unknown"})`);
+    lines.push(`時刻: ${summary.latestFailed.queued_at ?? "—"}`);
+    const errorMessage = summary.latestFailed.error?.message ?? "詳細不明";
+    lines.push(`エラー: ${errorMessage}`);
+    lines.push(`_詳細: \`/runs ${summary.latestFailed.run_id}\`_`);
+  }
+
+  return lines.join("\n");
+}
+
 // ── Command handler ────────────────────────────────────────────────────────────
 
 /**
@@ -443,6 +536,18 @@ async function handleRunsRetry(ctx, runId) {
 }
 
 /**
+ * Handle /runs health.
+ */
+async function handleRunsHealth(ctx) {
+  const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
+  const runsDir = resolveRunsDir(cfg);
+  const today = new Date().toISOString().slice(0, 10);
+  const runs = await loadRunsForDate(runsDir, today, HEALTH_SCAN_LIMIT);
+  const summary = summarizeRunsHealth(runs, today);
+  return { text: formatHealthSummary(summary) };
+}
+
+/**
  * Main /runs command handler.
  * With no args → list. With run_id → detail.
  */
@@ -451,6 +556,10 @@ async function handleRunsCommand(ctx) {
 
   if (!args) {
     return handleRunsList(ctx);
+  }
+
+  if (args === "health") {
+    return handleRunsHealth(ctx);
   }
 
   const retryMatch = args.match(/^retry\s+(run_[A-Za-z0-9_]+)$/);
@@ -469,6 +578,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs` — 直近の run 一覧",
       "• `/runs <run_id>` — run 詳細",
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
+      "• `/runs health` — 今日の run health summary",
     ].join("\n"),
   };
 }
@@ -493,11 +603,14 @@ const plugin = {
 export {
   findRunById,
   formatRunId,
+  formatHealthSummary,
   formatRunDetail,
   formatRunList,
   handleRunsCommand,
+  loadRunsForDate,
   listRuns,
   resolveRunsDir,
+  summarizeRunsHealth,
   writeRunRecord,
 };
 
