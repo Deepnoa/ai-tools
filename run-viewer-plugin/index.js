@@ -222,7 +222,7 @@ const plugin = {
   register(api) {
     api.registerCommand({
       name: "runs",
-      description: "直近の run 記録一覧を表示します。/runs <run_id> で詳細表示。",
+      description: "直近の run 記録一覧を表示します。",
       acceptsArgs: true,
       handler: handleRunsCommand,
     });
