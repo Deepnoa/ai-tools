@@ -1,0 +1,21 @@
+{
+  "id": "run-viewer",
+  "uiHints": {
+    "runsDir": {
+      "label": "Run Store Directory",
+      "placeholder": "~/.openclaw/runs"
+    },
+    "listLimit": {
+      "label": "Default List Limit"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "runsDir": { "type": "string" },
+      "listLimit": { "type": "number" }
+    }
+  }
+}
