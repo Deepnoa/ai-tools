@@ -16,6 +16,7 @@
  */
 
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -66,6 +67,41 @@ async function readRunFile(filePath) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Generate a run_id in the canonical format run_YYYYMMDD_HHMMSS_xxx.
+ */
+function formatRunId(now = new Date()) {
+  const yyyy = String(now.getUTCFullYear());
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  const hh = String(now.getUTCHours()).padStart(2, "0");
+  const min = String(now.getUTCMinutes()).padStart(2, "0");
+  const ss = String(now.getUTCSeconds()).padStart(2, "0");
+  const suffix = crypto.randomBytes(2).toString("hex").slice(0, 3);
+  return `run_${yyyy}${mm}${dd}_${hh}${min}${ss}_${suffix}`;
+}
+
+/**
+ * Atomically write a run record into runs/YYYY-MM-DD/<run_id>.json.
+ */
+async function writeRunRecord(runsDir, record) {
+  const dateMatch = record.run_id.match(/^run_(\d{4})(\d{2})(\d{2})_/);
+  if (!dateMatch) {
+    throw new Error(`invalid run_id: ${record.run_id}`);
+  }
+
+  const dateDir = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+  const dirPath = path.join(runsDir, dateDir);
+  const filePath = path.join(dirPath, `${record.run_id}.json`);
+  const tempPath = path.join(dirPath, `.${record.run_id}.${process.pid}.${Date.now()}.tmp`);
+
+  await fs.mkdir(dirPath, { recursive: true });
+  await fs.writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await fs.rename(tempPath, filePath);
+
+  return filePath;
 }
 
 /**
@@ -298,6 +334,19 @@ function formatRunDetail(run) {
   return lines.join("\n");
 }
 
+/**
+ * Format a retry acceptance response.
+ */
+function formatRetryAccepted(originalRunId, retryRunId) {
+  return [
+    `⏳ *retry を受付しました*`,
+    `元 run: \`${originalRunId}\``,
+    `新しい run: \`${retryRunId}\``,
+    "",
+    `_詳細: \`/runs ${retryRunId}\`_`,
+  ].join("\n");
+}
+
 // ── Command handler ────────────────────────────────────────────────────────────
 
 /**
@@ -336,6 +385,64 @@ async function handleRunsDetail(ctx, runId) {
 }
 
 /**
+ * Handle /runs retry <run_id>.
+ */
+async function handleRunsRetry(ctx, runId) {
+  const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
+  const runsDir = resolveRunsDir(cfg);
+  const original = await findRunById(runsDir, runId);
+
+  if (!original) {
+    return {
+      text: [
+        `run が見つかりません: \`${runId}\``,
+        "",
+        "_一覧: `/runs`_",
+      ].join("\n"),
+    };
+  }
+
+  if (!["failed", "cancelled"].includes(original.status)) {
+    return {
+      text: [
+        `再実行できません: \`${runId}\` は status=\`${original.status ?? "unknown"}\` です`,
+        "retry できるのは `failed` または `cancelled` の run だけです。",
+        "",
+        `_詳細: \`/runs ${runId}\`_`,
+      ].join("\n"),
+    };
+  }
+
+  const now = new Date();
+  const retryRunId = formatRunId(now);
+  const retryCount = Number(original.retry_count || 0) + 1;
+  const retryRecord = {
+    run_id: retryRunId,
+    requested_by: original.requested_by,
+    requested_by_name: original.requested_by_name,
+    channel_id: original.channel_id ?? null,
+    channel_name: original.channel_name ?? null,
+    raw_text: original.raw_text,
+    kind: original.kind,
+    normalized_task: original.normalized_task,
+    params: original.params || {},
+    status: "queued",
+    sense_job_id: null,
+    queued_at: now.toISOString(),
+    started_at: null,
+    done_at: null,
+    result: null,
+    error: null,
+    retry_of: runId,
+    retry_count: retryCount,
+    slack_ts: original.slack_ts ?? null,
+  };
+
+  await writeRunRecord(runsDir, retryRecord);
+  return { text: formatRetryAccepted(runId, retryRunId) };
+}
+
+/**
  * Main /runs command handler.
  * With no args → list. With run_id → detail.
  */
@@ -344,6 +451,11 @@ async function handleRunsCommand(ctx) {
 
   if (!args) {
     return handleRunsList(ctx);
+  }
+
+  const retryMatch = args.match(/^retry\s+(run_[A-Za-z0-9_]+)$/);
+  if (retryMatch) {
+    return handleRunsRetry(ctx, retryMatch[1]);
   }
 
   if (RUN_ID_RE.test(args)) {
@@ -356,7 +468,7 @@ async function handleRunsCommand(ctx) {
       "*`/runs` コマンド使い方:*",
       "• `/runs` — 直近の run 一覧",
       "• `/runs <run_id>` — run 詳細",
-      "• `/runs retry <run_id>` — run をリトライ _(近日対応)_",
+      "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
     ].join("\n"),
   };
 }
@@ -380,11 +492,13 @@ const plugin = {
 
 export {
   findRunById,
+  formatRunId,
   formatRunDetail,
   formatRunList,
   handleRunsCommand,
   listRuns,
   resolveRunsDir,
+  writeRunRecord,
 };
 
 export default plugin;

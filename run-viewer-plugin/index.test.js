@@ -6,9 +6,11 @@ import path from "node:path";
 
 import plugin, {
   findRunById,
+  formatRunId,
   formatRunDetail,
   handleRunsCommand,
   listRuns,
+  writeRunRecord,
 } from "./index.js";
 
 async function withTempRunsDir(fn) {
@@ -219,5 +221,90 @@ test("handleRunsCommand returns not-found message for missing run_id", async () 
 
     assert.match(result.text, /run が見つかりません: `run_20260415_999999_zzz`/);
     assert.match(result.text, /一覧: `\/runs`/);
+  });
+});
+
+test("formatRunId returns canonical run_id format", () => {
+  const runId = formatRunId(new Date("2026-04-15T03:04:05Z"));
+  assert.match(runId, /^run_20260415_030405_[a-f0-9]{3}$/);
+});
+
+test("writeRunRecord stores a retry record under the date derived from run_id", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const record = makeRecord({
+      run_id: "run_20260415_030405_abc",
+      queued_at: "2026-04-15T03:04:05Z",
+      status: "queued",
+      result: null,
+    });
+
+    const filePath = await writeRunRecord(runsDir, record);
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+
+    assert.match(filePath, /2026-04-15\/run_20260415_030405_abc\.json$/);
+    assert.deepEqual(parsed, record);
+  });
+});
+
+test("handleRunsCommand creates a queued retry record for failed runs", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const original = makeRecord({
+      run_id: "run_20260415_105041_ece",
+      queued_at: "2026-04-15T10:50:41.274510Z",
+      started_at: "2026-04-15T10:50:43.274510Z",
+      done_at: "2026-04-15T10:50:50.274510Z",
+      status: "failed",
+      result: null,
+      error: {
+        message: "Sense worker 接続タイムアウト",
+        detail: "request failed: timed out",
+      },
+      retry_of: null,
+      retry_count: 0,
+    });
+    await writeRun(runsDir, original);
+
+    const result = await handleRunsCommand(makeContext(runsDir, "retry run_20260415_105041_ece"));
+
+    assert.match(result.text, /retry を受付しました/);
+    assert.match(result.text, /元 run: `run_20260415_105041_ece`/);
+
+    const runs = await listRuns(runsDir, 10);
+    const retried = runs.find((run) => run.retry_of === original.run_id);
+    assert.ok(retried);
+    assert.equal(retried.status, "queued");
+    assert.equal(retried.retry_count, 1);
+    assert.equal(retried.retry_of, original.run_id);
+    assert.equal(retried.raw_text, original.raw_text);
+    assert.equal(retried.kind, original.kind);
+    assert.equal(retried.result, null);
+    assert.equal(retried.error, null);
+    assert.equal(retried.started_at, null);
+    assert.equal(retried.done_at, null);
+  });
+});
+
+test("handleRunsCommand refuses retry for non-retryable status", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const original = makeRecord({
+      run_id: "run_20260415_020112_a1b",
+      queued_at: "2026-04-15T02:01:12Z",
+      status: "done",
+    });
+    await writeRun(runsDir, original);
+
+    const result = await handleRunsCommand(makeContext(runsDir, "retry run_20260415_020112_a1b"));
+
+    assert.match(result.text, /再実行できません: `run_20260415_020112_a1b` は status=`done` です/);
+    assert.match(result.text, /failed` または `cancelled`/);
+  });
+});
+
+test("handleRunsCommand returns not-found for missing retry target", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "retry run_20260415_999999_zzz"));
+
+    assert.match(result.text, /run が見つかりません: `run_20260415_999999_zzz`/);
   });
 });
