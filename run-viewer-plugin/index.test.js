@@ -14,6 +14,7 @@ import plugin, {
   listRuns,
   loadRunsForHealthRange,
   loadRunsForDate,
+  parseListFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
   summarizeRunsHealth,
@@ -734,5 +735,158 @@ test("handleRunsCommand health returns usage when explicit range contains invali
 
     assert.match(result.text, /health の期間指定が不正です/);
     assert.match(result.text, /\/runs health 2026-04-15..2026-04-17/);
+  });
+});
+
+// ── Filter tests ───────────────────────────────────────────────────────────────
+
+test("parseListFilter recognizes all status values", () => {
+  for (const status of ["queued", "running", "done", "failed", "cancelled"]) {
+    assert.deepEqual(parseListFilter(status), { type: "status", value: status });
+  }
+});
+
+test("parseListFilter recognizes kind= filter", () => {
+  assert.deepEqual(parseListFilter("kind=health"), { type: "kind", value: "health" });
+  assert.deepEqual(parseListFilter("kind=digest"), { type: "kind", value: "digest" });
+  assert.deepEqual(parseListFilter("kind=free-form_task"), { type: "kind", value: "free-form_task" });
+});
+
+test("parseListFilter recognizes last= filter", () => {
+  assert.deepEqual(parseListFilter("last=5"), { type: "last", value: 5 });
+  assert.deepEqual(parseListFilter("last=20"), { type: "last", value: 20 });
+});
+
+test("parseListFilter returns null for unrecognized or invalid input", () => {
+  assert.equal(parseListFilter("unknown"), null);
+  assert.equal(parseListFilter("kind="), null);       // empty kind value
+  assert.equal(parseListFilter("last=0"), null);      // zero is not valid
+  assert.equal(parseListFilter("last=abc"), null);    // non-numeric
+  assert.equal(parseListFilter(""), null);            // empty (handled by list branch)
+});
+
+test("handleRunsCommand filters by status: shows only matching runs", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      status: "done",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010002_bbb",
+      queued_at: "2026-04-15T01:00:02Z",
+      status: "failed",
+      result: null,
+      error: { message: "oops" },
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010003_ccc",
+      queued_at: "2026-04-15T01:00:03Z",
+      status: "done",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "failed"));
+
+    assert.match(result.text, /run_20260415_010002_bbb/);
+    assert.doesNotMatch(result.text, /run_20260415_010001_aaa/);
+    assert.doesNotMatch(result.text, /run_20260415_010003_ccc/);
+    assert.match(result.text, /status=failed/);
+  });
+});
+
+test("handleRunsCommand filter by status returns empty-list message when no match", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      status: "done",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "failed"));
+
+    assert.match(result.text, /実行記録が見つかりません/);
+    assert.match(result.text, /status=failed/);
+  });
+});
+
+test("handleRunsCommand filters by kind: shows only matching runs", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      kind: "health",
+      normalized_task: "health",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010002_bbb",
+      queued_at: "2026-04-15T01:00:02Z",
+      kind: "digest",
+      normalized_task: "digest",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010003_ccc",
+      queued_at: "2026-04-15T01:00:03Z",
+      kind: "health",
+      normalized_task: "health",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "kind=health"));
+
+    assert.match(result.text, /run_20260415_010001_aaa/);
+    assert.match(result.text, /run_20260415_010003_ccc/);
+    assert.doesNotMatch(result.text, /run_20260415_010002_bbb/);
+    assert.match(result.text, /kind=health/);
+  });
+});
+
+test("handleRunsCommand last=N limits result count", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    for (let i = 1; i <= 10; i++) {
+      const sec = String(i).padStart(2, "0");
+      await writeRun(runsDir, makeRecord({
+        run_id: `run_20260415_0100${sec}_${String(i).padStart(3, "0")}`,
+        queued_at: `2026-04-15T01:00:${sec}Z`,
+      }));
+    }
+
+    const result = await handleRunsCommand(makeContext(runsDir, "last=3"));
+    const runLines = result.text.split("\n").filter((line) => line.includes("`run_"));
+
+    assert.equal(runLines.length, 3);
+    // newest first
+    assert.match(runLines[0], /run_20260415_010010/);
+  });
+});
+
+test("handleRunsCommand returns usage hint for unrecognized args", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "unknown-arg"));
+
+    assert.match(result.text, /コマンド使い方/);
+    assert.match(result.text, /kind=<value>/);
+    assert.match(result.text, /last=<n>/);
+  });
+});
+
+test("handleRunsCommand existing /runs list behavior is unchanged by filter addition", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      status: "done",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010002_bbb",
+      queued_at: "2026-04-15T01:00:02Z",
+      status: "failed",
+      result: null,
+      error: { message: "oops" },
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, ""));
+
+    assert.match(result.text, /直近の run 記録/);
+    assert.match(result.text, /run_20260415_010001_aaa/);
+    assert.match(result.text, /run_20260415_010002_bbb/);
   });
 });
