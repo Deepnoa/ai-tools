@@ -88,8 +88,6 @@ Duplicate status, kind, or `last=` conditions still return a usage hint.
 | `/runs search health failed kind=digest last=3` | up to 3 most recent runs matching all three conditions |
 | `/runs failed search health` | same as above — modifiers are order-independent |
 
-**Note:** status keywords (`failed`, `done`, `running`, `queued`, `cancelled`) are reserved and cannot be used as the search query itself. `/runs search failed` returns a usage hint.
-
 **Scope:** all `/runs` filters and `/runs search <text>` scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
 
 **Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
