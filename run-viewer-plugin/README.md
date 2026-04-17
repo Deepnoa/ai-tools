@@ -57,9 +57,9 @@ export RUN_VIEWER_HEALTH_TIME_ZONE=Asia/Tokyo
 
 ## Install for dev
 
-From the OpenClaw checkout:
+From the `ai-tools` repo root:
 
 ```bash
-openclaw plugins install -l /home/deepnoa/ai-tools/run-viewer-plugin
+openclaw plugins install -l ./run-viewer-plugin
 openclaw plugins enable run-viewer
 ```
