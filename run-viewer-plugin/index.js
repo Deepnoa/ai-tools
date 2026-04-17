@@ -752,7 +752,9 @@ function parseListFilter(args) {
  *   "search health failed kind=digest"      → { query: "health", status: "failed", kind: "digest",  last: null }
  *   "search health last=5"                  → { query: "health", status: null,     kind: null,      last: 5 }
  *   "failed search health last=5"           → { query: "health", status: "failed", kind: null,      last: 5 }
- *   "search failed"                         → null (missing query; next token is a filter token)
+ *   "search failed"                         → { query: "failed", status: null,     kind: null,      last: null }
+ *   "search failed kind=digest"             → { query: "failed", status: null,     kind: "digest",  last: null }
+ *   "search failed done"                    → { query: "failed", status: "done",   kind: null,      last: null }
  *   "search health search digest"           → null (duplicate search)
  */
 function parseSearchFilter(args) {
@@ -769,10 +771,12 @@ function parseSearchFilter(args) {
     if (token === "search") {
       if (query !== null) return null;
       const next = tokens[i + 1];
+      // The token immediately after "search" is always the query, even if it
+      // matches a status keyword. Status keywords appearing before or after the
+      // query are still treated as filters.
       if (
         !next ||
         next === "search" ||
-        STATUS_VALUES.has(next) ||
         /^kind=/.test(next) ||
         /^last=/.test(next)
       ) {
