@@ -743,6 +743,80 @@ function parseListFilter(args) {
 }
 
 /**
+ * Parse `/runs search <text>` with optional status/kind/last modifiers.
+ *
+ * Examples:
+ *   "search health"                         → { query: "health", status: null,     kind: null,      last: null }
+ *   "search health failed"                  → { query: "health", status: "failed", kind: null,      last: null }
+ *   "search health kind=digest"             → { query: "health", status: null,     kind: "digest",  last: null }
+ *   "search health failed kind=digest"      → { query: "health", status: "failed", kind: "digest",  last: null }
+ *   "search health last=5"                  → { query: "health", status: null,     kind: null,      last: 5 }
+ *   "failed search health last=5"           → { query: "health", status: "failed", kind: null,      last: 5 }
+ *   "search failed"                         → { query: "failed", status: null,     kind: null,      last: null }
+ *   "search failed kind=digest"             → { query: "failed", status: null,     kind: "digest",  last: null }
+ *   "search failed done"                    → { query: "failed", status: "done",   kind: null,      last: null }
+ *   "search health search digest"           → null (duplicate search)
+ */
+function parseSearchFilter(args) {
+  const trimmed = (args ?? "").trim();
+  const tokens = trimmed.split(/\s+/);
+  let query = null;
+  let status = null;
+  let kind = null;
+  let last = null;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+
+    if (token === "search") {
+      if (query !== null) return null;
+      const next = tokens[i + 1];
+      // The token immediately after "search" is always the query, even if it
+      // matches a status keyword. Status keywords appearing before or after the
+      // query are still treated as filters.
+      if (
+        !next ||
+        next === "search" ||
+        /^kind=/.test(next) ||
+        /^last=/.test(next)
+      ) {
+        return null;
+      }
+      query = next;
+      i += 1;
+      continue;
+    }
+
+    if (STATUS_VALUES.has(token)) {
+      if (status !== null) return null;
+      status = token;
+      continue;
+    }
+
+    const kindMatch = token.match(/^kind=([A-Za-z0-9_-]+)$/);
+    if (kindMatch) {
+      if (kind !== null) return null;
+      kind = kindMatch[1];
+      continue;
+    }
+
+    const lastMatch = token.match(/^last=(\d+)$/);
+    if (lastMatch) {
+      const n = Number(lastMatch[1]);
+      if (!Number.isInteger(n) || n <= 0) return null;
+      if (last !== null) return null;
+      last = n;
+      continue;
+    }
+
+    return null;
+  }
+
+  if (query === null) return null;
+  return { type: "search", query, status, kind, last };
+}
+
+/**
  * Handle filtered list commands:
  *   /runs <status>               — single status filter
  *   /runs kind=<v>               — single kind filter
@@ -759,21 +833,11 @@ async function handleRunsFiltered(ctx, filter) {
       ? cfg.listLimit
       : DEFAULT_LIST_LIMIT;
 
-  // Scan up to MAX_LIST_LIMIT, apply filters, then cap display count.
-  const allRuns = await listRuns(runsDir, MAX_LIST_LIMIT);
-  const filtered = allRuns.filter((run) => {
-    if (filter.status !== null && run.status !== filter.status) return false;
-    if (filter.kind !== null && run.kind !== filter.kind) return false;
-    return true;
+  return handleRunsListQuery(ctx, {
+    ...filter,
+    configLimit,
+    runsDir,
   });
-  const limit = filter.last ?? configLimit;
-  const capped = filtered.slice(0, limit);
-
-  const parts = [];
-  if (filter.status) parts.push(`status=${filter.status}`);
-  if (filter.kind) parts.push(`kind=${filter.kind}`);
-  if (filter.last !== null) parts.push(`last=${filter.last}`);
-  return { text: formatRunList(capped, parts.join(" / ")) };
 }
 
 function matchesRunSearch(run, query) {
@@ -786,16 +850,42 @@ function matchesRunSearch(run, query) {
   ].some((value) => value.toLowerCase().includes(needle));
 }
 
-/**
- * Handle /runs search <text>.
- */
-async function handleRunsSearch(ctx, query) {
+async function handleRunsListQuery(ctx, querySpec) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
-  const runsDir = resolveRunsDir(cfg);
-  const matched = (await listRuns(runsDir, MAX_LIST_LIMIT))
-    .filter((run) => matchesRunSearch(run, query));
+  const runsDir = querySpec.runsDir ?? resolveRunsDir(cfg);
+  const configLimit = querySpec.configLimit ??
+    (typeof cfg.listLimit === "number" && cfg.listLimit > 0
+      ? cfg.listLimit
+      : DEFAULT_LIST_LIMIT);
 
-  return { text: formatRunList(matched, `search=${query}`) };
+  let filtered = await listRuns(runsDir, MAX_LIST_LIMIT);
+
+  if (querySpec.query != null) {
+    filtered = filtered.filter((run) => matchesRunSearch(run, querySpec.query));
+  }
+  if (querySpec.status !== null) {
+    filtered = filtered.filter((run) => run.status === querySpec.status);
+  }
+  if (querySpec.kind !== null) {
+    filtered = filtered.filter((run) => run.kind === querySpec.kind);
+  }
+
+  const limit = querySpec.last ?? configLimit;
+  const capped = filtered.slice(0, limit);
+
+  const parts = [];
+  if (querySpec.query != null) parts.push(`search=${querySpec.query}`);
+  if (querySpec.status) parts.push(`status=${querySpec.status}`);
+  if (querySpec.kind) parts.push(`kind=${querySpec.kind}`);
+  if (querySpec.last !== null) parts.push(`last=${querySpec.last}`);
+  return { text: formatRunList(capped, parts.join(" / ")) };
+}
+
+/**
+ * Handle /runs search <text> with optional status/kind/last modifiers.
+ */
+async function handleRunsSearch(ctx, querySpec) {
+  return handleRunsListQuery(ctx, querySpec);
 }
 
 /**
@@ -944,18 +1034,17 @@ async function handleRunsCommand(ctx) {
     return handleRunsRetry(ctx, retryMatch[1]);
   }
 
-  const searchMatch = args.match(/^search(?:\s+(.+))?$/);
-  if (searchMatch) {
-    const query = searchMatch[1]?.trim() ?? "";
-    if (!query) {
-      return {
-        text: [
-          "search の使い方が不正です。",
-          "使い方: `/runs search <text>`",
-        ].join("\n"),
-      };
-    }
-    return handleRunsSearch(ctx, query);
+  const searchFilter = parseSearchFilter(args);
+  if (searchFilter) {
+    return handleRunsSearch(ctx, searchFilter);
+  }
+  if (args.split(/\s+/).includes("search")) {
+    return {
+      text: [
+        "search の使い方が不正です。",
+        "使い方: `/runs search <text> [status] [kind=<value>] [last=<n>]`",
+      ].join("\n"),
+    };
   }
 
   if (RUN_ID_RE.test(args)) {
@@ -976,6 +1065,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
       "• `/runs search <text>` — normalized_task / raw_text を部分一致検索",
+      "• `/runs search <text> [<status>] [kind=<value>] [last=<n>]` — 検索後に status/kind/last を適用",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
@@ -1015,8 +1105,10 @@ export {
   loadRunsForDate,
   listRuns,
   getHealthDate,
+  handleRunsListQuery,
   matchesRunSearch,
   parseListFilter,
+  parseSearchFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
   resolveRunsDir,
