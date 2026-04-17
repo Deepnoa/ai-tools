@@ -1061,7 +1061,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
       "• `/runs search <text>` — normalized_task / raw_text を部分一致検索",
-      "• `/runs search <text> <status> [kind=<value>] [last=<n>]` — 検索後に status/kind/last を適用",
+      "• `/runs search <text> [<status>] [kind=<value>] [last=<n>]` — 検索後に status/kind/last を適用",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
