@@ -891,6 +891,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs last=<n>` — 件数指定",
       "• `/runs last=<n> <status>` — フィルタ後に件数指定 (例: last=5 failed)",
       "• `/runs last=<n> kind=<value>` — フィルタ後に件数指定 (例: last=10 kind=health)",
+      "• `/runs last=<n> <status> kind=<value>` — 複合フィルタ後に件数指定 (例: last=5 failed kind=digest)",
     ].join("\n"),
   };
 }
