@@ -11,6 +11,9 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 - `/runs health 7d` — health summary for today and the previous 6 days
 - `/runs health YYYY-MM-DD` — health summary for a specific date
 - `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
+- `/runs <status>` — filter list by status (failed / done / running / queued / cancelled)
+- `/runs kind=<value>` — filter list by kind (e.g. `kind=health`, `kind=digest`)
+- `/runs last=<n>` — limit list to n most recent records
 
 Unknown or malformed arguments return a usage hint.
 
@@ -34,6 +37,25 @@ First valid value wins:
 1. `healthTimeZone` in plugin config
 2. `RUN_VIEWER_HEALTH_TIME_ZONE` environment variable
 3. `UTC` (built-in default)
+
+## `/runs` — filters
+
+Single-condition filters on the run list.
+
+| Command | Filters by |
+|---------|-----------|
+| `/runs failed` | `status = failed` |
+| `/runs done` | `status = done` |
+| `/runs running` | `status = running` |
+| `/runs queued` | `status = queued` |
+| `/runs cancelled` | `status = cancelled` |
+| `/runs kind=health` | `kind = health` |
+| `/runs kind=<value>` | any `kind` value |
+| `/runs last=<n>` | newest n records (overrides `listLimit`) |
+
+**Scope:** status and kind filters scan the 50 most recent records. Records outside that window are not searched.
+
+**Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
 
 ## Config
 
