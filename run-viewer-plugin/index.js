@@ -679,7 +679,7 @@ async function handleRunsFiltered(ctx, filter) {
 
   if (filter.type === "last") {
     const runs = await listRuns(runsDir, filter.value);
-    return { text: formatRunList(runs) };
+    return { text: formatRunList(runs, `last=${filter.value}`) };
   }
 
   // status / kind: scan up to MAX_LIST_LIMIT, filter in-memory, cap at configLimit
@@ -855,7 +855,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs <run_id>` — run 詳細",
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
-      "• `/runs failed` | `done` | `running` | `queued` | `cancelled` — status でフィルタ",
+      "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs last=<n>` — 件数指定",
     ].join("\n"),
