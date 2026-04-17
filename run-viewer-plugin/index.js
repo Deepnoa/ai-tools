@@ -743,19 +743,20 @@ function parseListFilter(args) {
 }
 
 /**
- * Parse `/runs search <text>` with optional status/kind/last modifiers.
+ * Parse `/runs search <text...>` with optional status/kind/last modifiers.
+ * Multiple query keywords are collected (AND search).
  *
  * Examples:
- *   "search health"                         → { query: "health", status: null,     kind: null,      last: null }
- *   "search health failed"                  → { query: "health", status: "failed", kind: null,      last: null }
- *   "search health kind=digest"             → { query: "health", status: null,     kind: "digest",  last: null }
- *   "search health failed kind=digest"      → { query: "health", status: "failed", kind: "digest",  last: null }
- *   "search health last=5"                  → { query: "health", status: null,     kind: null,      last: 5 }
- *   "failed search health last=5"           → { query: "health", status: "failed", kind: null,      last: 5 }
- *   "search failed"                         → { query: "failed", status: null,     kind: null,      last: null }
- *   "search failed kind=digest"             → { query: "failed", status: null,     kind: "digest",  last: null }
- *   "search failed done"                    → { query: "failed", status: "done",   kind: null,      last: null }
- *   "search health search digest"           → null (duplicate search)
+ *   "search health"                              → { query: ["health"],          status: null,     kind: null,      last: null }
+ *   "search health check"                        → { query: ["health","check"],  status: null,     kind: null,      last: null }
+ *   "search api error failed"                    → { query: ["api","error"],     status: "failed", kind: null,      last: null }
+ *   "search health failed"                       → { query: ["health"],          status: "failed", kind: null,      last: null }
+ *   "search health kind=digest"                  → { query: ["health"],          status: null,     kind: "digest",  last: null }
+ *   "search health check failed kind=digest last=5" → { query: ["health","check"], status: "failed", kind: "digest", last: 5 }
+ *   "failed search health check last=5"          → { query: ["health","check"],  status: "failed", kind: null,      last: 5 }
+ *   "search failed"                              → { query: ["failed"],          status: null,     kind: null,      last: null }
+ *   "search failed done"                         → { query: ["failed"],          status: "done",   kind: null,      last: null }
+ *   "search health search digest"                → null (duplicate search)
  */
 function parseSearchFilter(args) {
   const trimmed = (args ?? "").trim();
@@ -770,20 +771,31 @@ function parseSearchFilter(args) {
 
     if (token === "search") {
       if (query !== null) return null;
-      const next = tokens[i + 1];
-      // The token immediately after "search" is always the query, even if it
-      // matches a status keyword. Status keywords appearing before or after the
-      // query are still treated as filters.
-      if (
-        !next ||
-        next === "search" ||
-        /^kind=/.test(next) ||
-        /^last=/.test(next)
-      ) {
+      i += 1;
+      if (i >= tokens.length) return null; // no query token
+
+      // The first token after "search" is always the query, even if it matches
+      // a status keyword (backward-compat). "search kind=...", "search last=..."
+      // and duplicate "search search" are still rejected.
+      const first = tokens[i];
+      if (first === "search" || /^kind=/.test(first) || /^last=/.test(first)) {
         return null;
       }
-      query = next;
+      const queryTokens = [first];
       i += 1;
+
+      // Collect additional consecutive non-filter tokens as extra query keywords.
+      while (i < tokens.length) {
+        const t = tokens[i];
+        if (STATUS_VALUES.has(t) || /^kind=/.test(t) || /^last=/.test(t) || t === "search") {
+          break;
+        }
+        queryTokens.push(t);
+        i += 1;
+      }
+      i -= 1; // outer loop will i += 1
+
+      query = queryTokens;
       continue;
     }
 
@@ -813,7 +825,7 @@ function parseSearchFilter(args) {
   }
 
   if (query === null) return null;
-  return { type: "search", query, status, kind, last };
+  return { type: "search", query, status, kind, last }; // query is string[]
 }
 
 /**
@@ -840,14 +852,22 @@ async function handleRunsFiltered(ctx, filter) {
   });
 }
 
-function matchesRunSearch(run, query) {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return false;
-
-  return [
+/**
+ * Returns true if the run matches all keywords (AND semantics).
+ * Each keyword is tested case-insensitively against normalized_task and raw_text.
+ * @param {object} run
+ * @param {string[]} queries — array of keywords (all must match)
+ */
+function matchesRunSearch(run, queries) {
+  const fields = [
     typeof run.normalized_task === "string" ? run.normalized_task : "",
     typeof run.raw_text === "string" ? run.raw_text : "",
-  ].some((value) => value.toLowerCase().includes(needle));
+  ];
+  return queries.every((keyword) => {
+    const needle = keyword.trim().toLowerCase();
+    if (!needle) return false;
+    return fields.some((field) => field.toLowerCase().includes(needle));
+  });
 }
 
 async function handleRunsListQuery(ctx, querySpec) {
@@ -874,7 +894,7 @@ async function handleRunsListQuery(ctx, querySpec) {
   const capped = filtered.slice(0, limit);
 
   const parts = [];
-  if (querySpec.query != null) parts.push(`search=${querySpec.query}`);
+  if (querySpec.query != null) parts.push(`search=${querySpec.query.join(" ")}`);
   if (querySpec.status) parts.push(`status=${querySpec.status}`);
   if (querySpec.kind) parts.push(`kind=${querySpec.kind}`);
   if (querySpec.last !== null) parts.push(`last=${querySpec.last}`);
@@ -1042,7 +1062,7 @@ async function handleRunsCommand(ctx) {
     return {
       text: [
         "search の使い方が不正です。",
-        "使い方: `/runs search <text> [status] [kind=<value>] [last=<n>]`",
+        "使い方: `/runs search <text...> [status] [kind=<value>] [last=<n>]`",
       ].join("\n"),
     };
   }
@@ -1064,8 +1084,8 @@ async function handleRunsCommand(ctx) {
       "• `/runs <run_id>` — run 詳細",
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
-      "• `/runs search <text>` — normalized_task / raw_text を部分一致検索",
-      "• `/runs search <text> [<status>] [kind=<value>] [last=<n>]` — 検索後に status/kind/last を適用",
+      "• `/runs search <text...>` — normalized_task / raw_text を部分一致検索（複数キーワード指定で AND 検索）",
+      "• `/runs search <text...> [<status>] [kind=<value>] [last=<n>]` — 検索後に status/kind/last を適用",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
