@@ -12,6 +12,7 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 - `/runs health YYYY-MM-DD` — health summary for a specific date
 - `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
 - `/runs search <text>` — search recent runs by text
+- `/runs search <text> [<status>] [kind=<value>] [last=<n>]` — search with optional filters
 - `/runs <status>` — filter list by status (failed / done / running / queued / cancelled)
 - `/runs kind=<value>` — filter list by kind (e.g. `kind=health`, `kind=digest`)
 - `/runs <status> kind=<value>` — compound filter: status AND kind (e.g. `failed kind=digest`)
@@ -42,7 +43,7 @@ First valid value wins:
 
 ## `/runs` — filters and search
 
-Single or compound filters on the run list, plus a standalone text search command.
+Single or compound filters on the run list, plus a text search command that accepts the same filter modifiers.
 
 | Command | Filters by |
 |---------|-----------|
@@ -59,12 +60,35 @@ Single or compound filters on the run list, plus a standalone text search comman
 | `/runs last=<n> kind=<value>` | filter by `kind`, then return the first `n` matches |
 | `/runs last=<n> <status> kind=<value>` | filter by `status` AND `kind`, then return the first `n` matches |
 | `/runs search <text>` | case-insensitive partial match on `normalized_task` and `raw_text` |
+| `/runs search <text> [<status>] [kind=<value>] [last=<n>]` | search, then apply status/kind/last |
 
 Status, kind, and `last=<n>` can be combined in any order. For example, `/runs last=5 failed` and `/runs failed last=5` are equivalent, and `/runs last=5 failed kind=digest` returns the first 5 runs that match both filters.
 
 Duplicate status, kind, or `last=` conditions still return a usage hint.
 
-`/runs search <text>` is standalone in this MVP. It searches `normalized_task` and `raw_text` with case-insensitive partial matching, for example `/runs search health`.
+### `/runs search` — text search with optional filters
+
+`/runs search <text>` searches `normalized_task` and `raw_text` with case-insensitive partial matching. All filter modifiers (`<status>`, `kind=<value>`, `last=<n>`) are optional and can be combined in any order.
+
+**Evaluation order:**
+
+1. Scan the 50 most recent records
+2. Apply text search (`normalized_task` / `raw_text`, case-insensitive partial match)
+3. Apply `status` and `kind` filters (AND)
+4. Apply `last=<n>` to cap the final result count
+
+**Examples:**
+
+| Command | What it returns |
+|---------|----------------|
+| `/runs search health` | runs whose task or text contains "health" |
+| `/runs search health failed` | matching runs with `status = failed` |
+| `/runs search health kind=digest` | matching runs with `kind = digest` |
+| `/runs search health last=5` | up to 5 most recent matching runs |
+| `/runs search health failed kind=digest last=3` | up to 3 most recent runs matching all three conditions |
+| `/runs failed search health` | same as above — modifiers are order-independent |
+
+**Note:** status keywords (`failed`, `done`, `running`, `queued`, `cancelled`) are reserved and cannot be used as the search query itself. `/runs search failed` returns a usage hint.
 
 **Scope:** all `/runs` filters and `/runs search <text>` scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
 
