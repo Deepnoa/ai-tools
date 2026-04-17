@@ -20,6 +20,7 @@ import plugin, {
   parseSearchFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
+  resolveScanLimit,
   summarizeRunsHealth,
   writeRunRecord,
 } from "./index.js";
@@ -421,6 +422,134 @@ test("resolveHealthTimeZone falls back from invalid config to valid env", () => 
       delete process.env.RUN_VIEWER_HEALTH_TIME_ZONE;
     } else {
       process.env.RUN_VIEWER_HEALTH_TIME_ZONE = original;
+    }
+  }
+});
+
+// ── resolveScanLimit ──────────────────────────────────────────────────────────
+
+test("resolveScanLimit returns DEFAULT_SCAN_LIMIT (100) when nothing is configured", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({}), 100);
+    assert.equal(resolveScanLimit(null), 100);
+    assert.equal(resolveScanLimit(undefined), 100);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit uses config.scanLimit when set", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 200 }), 200);
+    assert.equal(resolveScanLimit({ scanLimit: 1 }), 1);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit caps config.scanLimit at MAX_SCAN_LIMIT (1000)", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 2000 }), 1000);
+    assert.equal(resolveScanLimit({ scanLimit: 999999 }), 1000);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit falls back to RUN_VIEWER_SCAN_LIMIT env when config absent", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "150";
+
+  try {
+    assert.equal(resolveScanLimit({}), 150);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit caps RUN_VIEWER_SCAN_LIMIT env at MAX_SCAN_LIMIT (1000)", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "5000";
+
+  try {
+    assert.equal(resolveScanLimit({}), 1000);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit config wins over env", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "150";
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 300 }), 300);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit falls back to default when env is invalid", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "not-a-number";
+
+  try {
+    assert.equal(resolveScanLimit({}), 100);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit falls back to default when config.scanLimit is non-positive or non-integer", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 0 }), 100);
+    assert.equal(resolveScanLimit({ scanLimit: -1 }), 100);
+    assert.equal(resolveScanLimit({ scanLimit: "50" }), 100);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
     }
   }
 });
@@ -1781,5 +1910,68 @@ test("handleRunsCommand existing /runs list behavior is unchanged by filter addi
     assert.match(result.text, /直近の run 記録/);
     assert.match(result.text, /run_20260415_010001_aaa/);
     assert.match(result.text, /run_20260415_010002_bbb/);
+  });
+});
+
+test("handleRunsCommand scans beyond 50 records by default (scanLimit=100)", async () => {
+  // Write 55 runs. The oldest (run #1) has a unique normalized_task.
+  // With the default scanLimit of 100 it must be found; with scanLimit=40
+  // (capped before it) the same search must return nothing.
+  await withTempRunsDir(async (runsDir) => {
+    const TOTAL = 55;
+    const UNIQUE_TASK = "uniquetask_xzqy";
+
+    for (let i = 1; i <= TOTAL; i++) {
+      const sec = String(i).padStart(6, "0");
+      const isOldest = i === 1;
+      await writeRun(
+        runsDir,
+        makeRecord({
+          run_id: `run_20260415_${sec}_tst`,
+          queued_at: `2026-04-15T00:${String(Math.floor((i - 1) / 60)).padStart(2, "0")}:${String((i - 1) % 60).padStart(2, "0")}Z`,
+          normalized_task: isOldest ? UNIQUE_TASK : "ordinary_task",
+          raw_text: isOldest ? UNIQUE_TASK : "ordinary",
+          status: "done",
+        }),
+      );
+    }
+
+    // Delete env override so default (100) is used
+    const origEnv = process.env.RUN_VIEWER_SCAN_LIMIT;
+    delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+    try {
+      const OLDEST_RUN_ID = "run_20260415_000001_tst";
+
+      // With default scanLimit (100): all 55 runs are scanned → oldest run found
+      const resultDefault = await handleRunsCommand(
+        makeContext(runsDir, `search ${UNIQUE_TASK}`),
+      );
+      assert.match(
+        resultDefault.text,
+        new RegExp(OLDEST_RUN_ID),
+        "default scanLimit=100 should find the oldest run among 55",
+      );
+
+      // With scanLimit=40: only newest 40 of 55 are scanned → oldest run NOT found
+      const resultLimited = await handleRunsCommand(
+        makeContext(runsDir, `search ${UNIQUE_TASK}`, 10, {
+          config: {
+            plugins: { entries: { "run-viewer": { config: { scanLimit: 40 } } } },
+          },
+        }),
+      );
+      assert.doesNotMatch(
+        resultLimited.text,
+        new RegExp(OLDEST_RUN_ID),
+        "scanLimit=40 should not reach the oldest run among 55",
+      );
+    } finally {
+      if (origEnv == null) {
+        delete process.env.RUN_VIEWER_SCAN_LIMIT;
+      } else {
+        process.env.RUN_VIEWER_SCAN_LIMIT = origEnv;
+      }
+    }
   });
 });

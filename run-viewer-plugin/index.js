@@ -24,6 +24,8 @@ import path from "node:path";
 
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
+const DEFAULT_SCAN_LIMIT = 100;
+const MAX_SCAN_LIMIT = 1000;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
 const STATUS_VALUES = new Set(["queued", "running", "done", "failed", "cancelled"]);
 const DEFAULT_HEALTH_TIME_ZONE = "UTC";
@@ -77,6 +79,28 @@ function resolveHealthTimeZone(cfg) {
   }
 
   return DEFAULT_HEALTH_TIME_ZONE;
+}
+
+/**
+ * Resolve the scan limit — how many records to read from disk for filter/search.
+ * Config `scanLimit` takes precedence, then RUN_VIEWER_SCAN_LIMIT env, then 100.
+ * The resolved value is capped at MAX_SCAN_LIMIT (1000).
+ */
+function resolveScanLimit(cfg) {
+  const fromConfig = typeof cfg?.scanLimit === "number" && cfg.scanLimit > 0
+    ? Math.trunc(cfg.scanLimit)
+    : 0;
+  if (fromConfig > 0) return Math.min(fromConfig, MAX_SCAN_LIMIT);
+
+  const envRaw = process.env.RUN_VIEWER_SCAN_LIMIT?.trim() ?? "";
+  if (envRaw) {
+    const fromEnv = parseInt(envRaw, 10);
+    if (Number.isInteger(fromEnv) && fromEnv > 0) {
+      return Math.min(fromEnv, MAX_SCAN_LIMIT);
+    }
+  }
+
+  return DEFAULT_SCAN_LIMIT;
 }
 
 /**
@@ -300,7 +324,7 @@ function isValidIsoDate(dateStr) {
  * Scans date directories in reverse chronological order.
  */
 async function listRuns(runsDir, limit) {
-  const cap = Math.min(Math.max(1, limit), MAX_LIST_LIMIT);
+  const cap = Math.max(1, Math.trunc(limit));
 
   let dateDirs;
   try {
@@ -877,8 +901,9 @@ async function handleRunsListQuery(ctx, querySpec) {
     (typeof cfg.listLimit === "number" && cfg.listLimit > 0
       ? cfg.listLimit
       : DEFAULT_LIST_LIMIT);
+  const scanLimit = resolveScanLimit(cfg);
 
-  let filtered = await listRuns(runsDir, MAX_LIST_LIMIT);
+  let filtered = await listRuns(runsDir, scanLimit);
 
   if (querySpec.query != null) {
     filtered = filtered.filter((run) => matchesRunSearch(run, querySpec.query));
@@ -914,9 +939,12 @@ async function handleRunsSearch(ctx, querySpec) {
 async function handleRunsList(ctx) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = resolveRunsDir(cfg);
-  const limit = typeof cfg.listLimit === "number" && cfg.listLimit > 0
-    ? cfg.listLimit
-    : DEFAULT_LIST_LIMIT;
+  const limit = Math.min(
+    typeof cfg.listLimit === "number" && cfg.listLimit > 0
+      ? cfg.listLimit
+      : DEFAULT_LIST_LIMIT,
+    MAX_LIST_LIMIT,
+  );
 
   const runs = await listRuns(runsDir, limit);
   return { text: formatRunList(runs) };
@@ -1132,6 +1160,7 @@ export {
   resolveHealthRange,
   resolveHealthTimeZone,
   resolveRunsDir,
+  resolveScanLimit,
   summarizeRunsHealth,
   writeRunRecord,
 };
