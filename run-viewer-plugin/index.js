@@ -552,23 +552,42 @@ function getRunTimestampMs(run) {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
-/**
- * Build a minimal health summary from a run store slice.
- */
-function summarizeRunsHealth(runs, periodLabel) {
-  const counts = {
+function makeEmptyHealthCounts() {
+  return {
     queued: 0,
     running: 0,
     done: 0,
     failed: 0,
     cancelled: 0,
   };
+}
+
+/**
+ * Build a minimal health summary from a run store slice.
+ */
+function summarizeRunsHealth(runs, periodLabel, options = {}) {
+  const counts = makeEmptyHealthCounts();
+  const timeZone = options.timeZone ?? null;
+  const dailyMap = new Map();
+
+  if (options.startDate && options.endDate) {
+    for (const date of enumerateDates(options.startDate, options.endDate).reverse()) {
+      dailyMap.set(date, makeEmptyHealthCounts());
+    }
+  }
 
   let latestFailed = null;
   for (const run of runs) {
     const status = run.status;
     if (status in counts) {
       counts[status] += 1;
+    }
+    if (timeZone && dailyMap.size > 0) {
+      const runDate = getRunHealthDate(run, timeZone);
+      const dayCounts = runDate ? dailyMap.get(runDate) : null;
+      if (dayCounts && status in dayCounts) {
+        dayCounts[status] += 1;
+      }
     }
     if (status === "failed") {
       if (latestFailed == null) {
@@ -594,11 +613,16 @@ function summarizeRunsHealth(runs, periodLabel) {
 
   return {
     date: periodLabel,
-    timeZone: null,
+    timeZone,
     total: runs.length,
     counts,
+    failedCount: counts.failed,
     latestFailed,
     overallStatus,
+    dailyCounts: Array.from(dailyMap, ([date, dayCounts]) => ({
+      date,
+      counts: dayCounts,
+    })),
   };
 }
 
@@ -611,15 +635,42 @@ function formatHealthSummary(summary) {
     summary.overallStatus === "degraded" ? "⚠️"
     : summary.overallStatus === "active" ? "🔄"
     : "✅";
+  const statusDetail =
+    summary.overallStatus === "degraded"
+      ? `failed=${summary.failedCount} in ${summary.date}`
+      : summary.overallStatus === "active"
+        ? [
+            summary.counts.queued > 0 ? `queued=${summary.counts.queued}` : null,
+            summary.counts.running > 0 ? `running=${summary.counts.running}` : null,
+          ].filter(Boolean).join(" | ")
+        : `failed=${summary.failedCount}`;
 
   lines.push(`${overallEmoji} *run health (${summary.date})*`);
   if (summary.timeZone) {
     lines.push(`timezone: ${summary.timeZone}`);
   }
+  if (statusDetail) {
+    lines.push(`status: ${summary.overallStatus} (${statusDetail})`);
+  }
   lines.push(
     `queued: ${summary.counts.queued} | running: ${summary.counts.running} | done: ${summary.counts.done} | failed: ${summary.counts.failed} | cancelled: ${summary.counts.cancelled}`,
   );
   lines.push(`total: ${summary.total}`);
+
+  if ((summary.dailyCounts?.length ?? 0) > 1) {
+    lines.push("");
+    lines.push("*daily summary:*");
+    for (const day of summary.dailyCounts) {
+      const parts = [
+        `done=${day.counts.done}`,
+        `failed=${day.counts.failed}`,
+      ];
+      if (day.counts.running > 0) parts.push(`running=${day.counts.running}`);
+      if (day.counts.queued > 0) parts.push(`queued=${day.counts.queued}`);
+      if (day.counts.cancelled > 0) parts.push(`cancelled=${day.counts.cancelled}`);
+      lines.push(`${day.date}: ${parts.join(" | ")}`);
+    }
+  }
 
   if (summary.latestFailed) {
     lines.push("");
@@ -841,8 +892,11 @@ async function handleRunsHealth(ctx, spec = "") {
     range.timeZone,
   );
   const summary = {
-    ...summarizeRunsHealth(runs, range.label),
-    timeZone: range.timeZone,
+    ...summarizeRunsHealth(runs, range.label, {
+      timeZone: range.timeZone,
+      startDate: range.startDate,
+      endDate: range.endDate,
+    }),
   };
   return { text: formatHealthSummary(summary) };
 }
