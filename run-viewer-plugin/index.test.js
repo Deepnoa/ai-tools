@@ -740,21 +740,46 @@ test("handleRunsCommand health returns usage when explicit range contains invali
 
 // ── Filter tests ───────────────────────────────────────────────────────────────
 
-test("parseListFilter recognizes all status values", () => {
+test("parseListFilter recognizes all status values as compound filter", () => {
   for (const status of ["queued", "running", "done", "failed", "cancelled"]) {
-    assert.deepEqual(parseListFilter(status), { type: "status", value: status });
+    assert.deepEqual(parseListFilter(status), { type: "compound", status, kind: null });
   }
 });
 
-test("parseListFilter recognizes kind= filter", () => {
-  assert.deepEqual(parseListFilter("kind=health"), { type: "kind", value: "health" });
-  assert.deepEqual(parseListFilter("kind=digest"), { type: "kind", value: "digest" });
-  assert.deepEqual(parseListFilter("kind=free-form_task"), { type: "kind", value: "free-form_task" });
+test("parseListFilter recognizes kind= filter as compound filter", () => {
+  assert.deepEqual(parseListFilter("kind=health"), { type: "compound", status: null, kind: "health" });
+  assert.deepEqual(parseListFilter("kind=digest"), { type: "compound", status: null, kind: "digest" });
+  assert.deepEqual(parseListFilter("kind=free-form_task"), { type: "compound", status: null, kind: "free-form_task" });
 });
 
 test("parseListFilter recognizes last= filter", () => {
   assert.deepEqual(parseListFilter("last=5"), { type: "last", value: 5 });
   assert.deepEqual(parseListFilter("last=20"), { type: "last", value: 20 });
+});
+
+test("parseListFilter recognizes compound status + kind filter (order-independent)", () => {
+  assert.deepEqual(
+    parseListFilter("failed kind=digest"),
+    { type: "compound", status: "failed", kind: "digest" },
+  );
+  assert.deepEqual(
+    parseListFilter("kind=health done"),
+    { type: "compound", status: "done", kind: "health" },
+  );
+});
+
+test("parseListFilter rejects duplicate status tokens", () => {
+  assert.equal(parseListFilter("failed done"), null);
+  assert.equal(parseListFilter("running queued"), null);
+});
+
+test("parseListFilter rejects duplicate kind tokens", () => {
+  assert.equal(parseListFilter("kind=health kind=digest"), null);
+});
+
+test("parseListFilter rejects last= combined with other tokens", () => {
+  // last= is standalone only — "last=5 failed" is not a valid single token match for last=
+  assert.equal(parseListFilter("last=5 failed"), null);
 });
 
 test("parseListFilter returns null for unrecognized or invalid input", () => {
@@ -865,6 +890,102 @@ test("handleRunsCommand returns usage hint for unrecognized args", async () => {
     assert.match(result.text, /コマンド使い方/);
     assert.match(result.text, /kind=<value>/);
     assert.match(result.text, /last=<n>/);
+  });
+});
+
+test("handleRunsCommand compound filter: status + kind shows only exact matches", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    // should match: failed + digest
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      status: "failed",
+      kind: "digest",
+      normalized_task: "digest",
+      result: null,
+      error: { message: "digest failed" },
+    }));
+    // status matches, kind doesn't
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010002_bbb",
+      queued_at: "2026-04-15T01:00:02Z",
+      status: "failed",
+      kind: "health",
+      normalized_task: "health",
+      result: null,
+      error: { message: "health failed" },
+    }));
+    // kind matches, status doesn't
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010003_ccc",
+      queued_at: "2026-04-15T01:00:03Z",
+      status: "done",
+      kind: "digest",
+      normalized_task: "digest",
+    }));
+    // neither matches
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010004_ddd",
+      queued_at: "2026-04-15T01:00:04Z",
+      status: "done",
+      kind: "health",
+      normalized_task: "health",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "failed kind=digest"));
+
+    assert.match(result.text, /run_20260415_010001_aaa/);
+    assert.doesNotMatch(result.text, /run_20260415_010002_bbb/);
+    assert.doesNotMatch(result.text, /run_20260415_010003_ccc/);
+    assert.doesNotMatch(result.text, /run_20260415_010004_ddd/);
+    assert.match(result.text, /status=failed/);
+    assert.match(result.text, /kind=digest/);
+  });
+});
+
+test("handleRunsCommand compound filter: kind first, status second (order-independent)", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      status: "done",
+      kind: "health",
+      normalized_task: "health",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010002_bbb",
+      queued_at: "2026-04-15T01:00:02Z",
+      status: "failed",
+      kind: "health",
+      normalized_task: "health",
+      result: null,
+      error: { message: "oops" },
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "kind=health done"));
+
+    assert.match(result.text, /run_20260415_010001_aaa/);
+    assert.doesNotMatch(result.text, /run_20260415_010002_bbb/);
+    assert.match(result.text, /status=done/);
+    assert.match(result.text, /kind=health/);
+  });
+});
+
+test("handleRunsCommand compound filter: empty result shows compound label", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_010001_aaa",
+      queued_at: "2026-04-15T01:00:01Z",
+      status: "done",
+      kind: "health",
+      normalized_task: "health",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "failed kind=health"));
+
+    assert.match(result.text, /実行記録が見つかりません/);
+    assert.match(result.text, /status=failed/);
+    assert.match(result.text, /kind=health/);
   });
 });
 
