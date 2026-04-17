@@ -637,38 +637,32 @@ function formatHealthSummary(summary) {
 
 /**
  * Parse a compound list filter from /runs args.
- * Supports up to two conditions: one status keyword and/or one kind= value.
- * last=N is standalone and cannot be combined with other conditions.
+ * Accepts up to three token types in any order:
+ *   - one status keyword (failed / done / running / queued / cancelled)
+ *   - one kind=<value> token
+ *   - one last=<n> token (count cap; may be combined with status/kind)
  *
- * Returns one of:
- *   { type: "compound", status: string|null, kind: string|null }
- *   { type: "last",     value: number }
- *   null — not a recognized filter
+ * Returns:
+ *   { type: "compound", status: string|null, kind: string|null, last: number|null }
+ *   null — unrecognized, duplicate token, or invalid last value
  *
  * Examples:
- *   "failed"              → { type: "compound", status: "failed", kind: null }
- *   "kind=health"         → { type: "compound", status: null,     kind: "health" }
- *   "failed kind=digest"  → { type: "compound", status: "failed", kind: "digest" }
- *   "kind=digest failed"  → { type: "compound", status: "failed", kind: "digest" }
- *   "last=10"             → { type: "last", value: 10 }
- *   "failed done"         → null  (duplicate status)
- *   "kind=a kind=b"       → null  (duplicate kind)
+ *   "failed"                   → { ..., status: "failed", kind: null,      last: null }
+ *   "kind=health"              → { ..., status: null,     kind: "health",   last: null }
+ *   "last=10"                  → { ..., status: null,     kind: null,       last: 10   }
+ *   "failed kind=digest"       → { ..., status: "failed", kind: "digest",   last: null }
+ *   "last=5 failed"            → { ..., status: "failed", kind: null,       last: 5    }
+ *   "last=5 failed kind=digest"→ { ..., status: "failed", kind: "digest",   last: 5    }
+ *   "failed done"              → null  (duplicate status)
+ *   "kind=a kind=b"            → null  (duplicate kind)
+ *   "last=5 last=10"           → null  (duplicate last)
  */
 function parseListFilter(args) {
   const trimmed = (args ?? "").trim();
-
-  // last= is always standalone — cannot be combined
-  const lastMatch = trimmed.match(/^last=(\d+)$/);
-  if (lastMatch) {
-    const n = Number(lastMatch[1]);
-    if (Number.isInteger(n) && n > 0) return { type: "last", value: n };
-    return null;
-  }
-
-  // Parse space-separated tokens: at most one status keyword and one kind= value
   const tokens = trimmed.split(/\s+/);
   let status = null;
   let kind = null;
+  let last = null;
 
   for (const token of tokens) {
     if (STATUS_VALUES.has(token)) {
@@ -680,13 +674,21 @@ function parseListFilter(args) {
         if (kind !== null) return null; // duplicate kind
         kind = kindMatch[1];
       } else {
-        return null; // unrecognized token
+        const lastMatch = token.match(/^last=(\d+)$/);
+        if (lastMatch) {
+          const n = Number(lastMatch[1]);
+          if (!Number.isInteger(n) || n <= 0) return null; // invalid value
+          if (last !== null) return null; // duplicate last
+          last = n;
+        } else {
+          return null; // unrecognized token
+        }
       }
     }
   }
 
-  if (status === null && kind === null) return null;
-  return { type: "compound", status, kind };
+  if (status === null && kind === null && last === null) return null;
+  return { type: "compound", status, kind, last };
 }
 
 /**
@@ -695,6 +697,8 @@ function parseListFilter(args) {
  *   /runs kind=<v>               — single kind filter
  *   /runs <status> kind=<v>      — compound status + kind filter
  *   /runs last=<n>               — count limit
+ *   /runs last=<n> <status>      — filter then cap
+ *   /runs last=<n> kind=<v>      — filter then cap
  */
 async function handleRunsFiltered(ctx, filter) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
@@ -704,23 +708,20 @@ async function handleRunsFiltered(ctx, filter) {
       ? cfg.listLimit
       : DEFAULT_LIST_LIMIT;
 
-  if (filter.type === "last") {
-    const runs = await listRuns(runsDir, filter.value);
-    return { text: formatRunList(runs, `last=${filter.value}`) };
-  }
-
-  // compound: status and/or kind — scan MAX_LIST_LIMIT, filter in-memory, cap at configLimit
+  // Scan up to MAX_LIST_LIMIT, apply filters, then cap display count.
   const allRuns = await listRuns(runsDir, MAX_LIST_LIMIT);
   const filtered = allRuns.filter((run) => {
     if (filter.status !== null && run.status !== filter.status) return false;
     if (filter.kind !== null && run.kind !== filter.kind) return false;
     return true;
   });
-  const capped = filtered.slice(0, configLimit);
+  const limit = filter.last ?? configLimit;
+  const capped = filtered.slice(0, limit);
 
   const parts = [];
   if (filter.status) parts.push(`status=${filter.status}`);
   if (filter.kind) parts.push(`kind=${filter.kind}`);
+  if (filter.last !== null) parts.push(`last=${filter.last}`);
   return { text: formatRunList(capped, parts.join(" / ")) };
 }
 
@@ -888,6 +889,8 @@ async function handleRunsCommand(ctx) {
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
       "• `/runs last=<n>` — 件数指定",
+      "• `/runs last=<n> <status>` — フィルタ後に件数指定 (例: last=5 failed)",
+      "• `/runs last=<n> kind=<value>` — フィルタ後に件数指定 (例: last=10 kind=health)",
     ].join("\n"),
   };
 }
