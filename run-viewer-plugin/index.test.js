@@ -845,31 +845,72 @@ test("matchesRunSearch matches normalized_task and raw_text case-insensitively",
     raw_text: "Digest health overview",
   });
 
-  assert.equal(matchesRunSearch(run, "health"), true);
-  assert.equal(matchesRunSearch(run, "DIGEST"), true);
-  assert.equal(matchesRunSearch(run, "missing"), false);
+  assert.equal(matchesRunSearch(run, ["health"]), true);
+  assert.equal(matchesRunSearch(run, ["DIGEST"]), true);
+  assert.equal(matchesRunSearch(run, ["missing"]), false);
+});
+
+test("matchesRunSearch AND-matches all keywords", () => {
+  const run = makeRecord({
+    normalized_task: "health check runner",
+    raw_text: "weekly digest report",
+  });
+
+  // all keywords present across fields
+  assert.equal(matchesRunSearch(run, ["health", "check"]), true);
+  assert.equal(matchesRunSearch(run, ["health", "digest"]), true);
+  // one keyword missing → false
+  assert.equal(matchesRunSearch(run, ["health", "missing"]), false);
+  assert.equal(matchesRunSearch(run, ["missing", "also-missing"]), false);
+  // single keyword still works
+  assert.equal(matchesRunSearch(run, ["health"]), true);
+  // case-insensitive AND
+  assert.equal(matchesRunSearch(run, ["HEALTH", "CHECK"]), true);
 });
 
 test("parseSearchFilter recognizes search with optional filters", () => {
   assert.deepEqual(
     parseSearchFilter("search health"),
-    { type: "search", query: "health", status: null, kind: null, last: null },
+    { type: "search", query: ["health"], status: null, kind: null, last: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health failed"),
-    { type: "search", query: "health", status: "failed", kind: null, last: null },
+    { type: "search", query: ["health"], status: "failed", kind: null, last: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health kind=digest"),
-    { type: "search", query: "health", status: null, kind: "digest", last: null },
+    { type: "search", query: ["health"], status: null, kind: "digest", last: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health failed kind=digest last=5"),
-    { type: "search", query: "health", status: "failed", kind: "digest", last: 5 },
+    { type: "search", query: ["health"], status: "failed", kind: "digest", last: 5 },
   );
   assert.deepEqual(
     parseSearchFilter("failed search health last=5"),
-    { type: "search", query: "health", status: "failed", kind: null, last: 5 },
+    { type: "search", query: ["health"], status: "failed", kind: null, last: 5 },
+  );
+});
+
+test("parseSearchFilter recognizes multiple query keywords (AND search)", () => {
+  assert.deepEqual(
+    parseSearchFilter("search health check"),
+    { type: "search", query: ["health", "check"], status: null, kind: null, last: null },
+  );
+  assert.deepEqual(
+    parseSearchFilter("search api error failed"),
+    { type: "search", query: ["api", "error"], status: "failed", kind: null, last: null },
+  );
+  assert.deepEqual(
+    parseSearchFilter("search health check kind=digest"),
+    { type: "search", query: ["health", "check"], status: null, kind: "digest", last: null },
+  );
+  assert.deepEqual(
+    parseSearchFilter("search health check failed kind=digest last=3"),
+    { type: "search", query: ["health", "check"], status: "failed", kind: "digest", last: 3 },
+  );
+  assert.deepEqual(
+    parseSearchFilter("failed search health check last=5"),
+    { type: "search", query: ["health", "check"], status: "failed", kind: null, last: 5 },
   );
 });
 
@@ -886,24 +927,24 @@ test("parseSearchFilter allows status keywords as search query", () => {
   // even when it matches a status keyword.
   assert.deepEqual(
     parseSearchFilter("search failed"),
-    { type: "search", query: "failed", status: null, kind: null, last: null },
+    { type: "search", query: ["failed"], status: null, kind: null, last: null },
   );
   assert.deepEqual(
     parseSearchFilter("search done"),
-    { type: "search", query: "done", status: null, kind: null, last: null },
+    { type: "search", query: ["done"], status: null, kind: null, last: null },
   );
   assert.deepEqual(
     parseSearchFilter("search failed kind=digest"),
-    { type: "search", query: "failed", status: null, kind: "digest", last: null },
+    { type: "search", query: ["failed"], status: null, kind: "digest", last: null },
   );
   assert.deepEqual(
     parseSearchFilter("search failed last=5"),
-    { type: "search", query: "failed", status: null, kind: null, last: 5 },
+    { type: "search", query: ["failed"], status: null, kind: null, last: 5 },
   );
   // status keyword as query, different status keyword as filter
   assert.deepEqual(
     parseSearchFilter("search failed done"),
-    { type: "search", query: "failed", status: "done", kind: null, last: null },
+    { type: "search", query: ["failed"], status: "done", kind: null, last: null },
   );
 });
 
@@ -1239,7 +1280,7 @@ test("handleRunsCommand search returns usage for incomplete input", async () => 
     const result = await handleRunsCommand(makeContext(runsDir, "search"));
 
     assert.match(result.text, /search の使い方が不正です/);
-    assert.match(result.text, /\/runs search <text> \[status\] \[kind=<value>\] \[last=<n>\]/);
+    assert.match(result.text, /\/runs search <text\.\.\.> \[status\] \[kind=<value>\] \[last=<n>\]/);
   });
 });
 
@@ -1310,12 +1351,154 @@ test("handleRunsCommand search uses status keyword as query, other keyword as fi
   });
 });
 
+test("handleRunsCommand search AND-matches multiple keywords", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_080001_001",
+      queued_at: "2026-04-16T08:00:01Z",
+      normalized_task: "health check runner",
+      raw_text: "daily health check",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_080002_002",
+      queued_at: "2026-04-16T08:00:02Z",
+      normalized_task: "health report",
+      raw_text: "weekly summary",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_080003_003",
+      queued_at: "2026-04-16T08:00:03Z",
+      normalized_task: "digest runner",
+      raw_text: "no keywords here",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health check"));
+
+    assert.match(result.text, /search=health check/);
+    assert.match(result.text, /run_20260416_080001_001/);
+    assert.doesNotMatch(result.text, /run_20260416_080002_002/); // "check" absent
+    assert.doesNotMatch(result.text, /run_20260416_080003_003/); // neither keyword
+  });
+});
+
+test("handleRunsCommand search AND returns empty when not all keywords match", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_081001_001",
+      queued_at: "2026-04-16T08:10:01Z",
+      normalized_task: "health runner",
+      raw_text: "no check here",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health missing-term"));
+
+    assert.match(result.text, /search=health missing-term/);
+    assert.doesNotMatch(result.text, /run_20260416_081001_001/);
+  });
+});
+
+test("handleRunsCommand search AND + status filter", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_082001_001",
+      queued_at: "2026-04-16T08:20:01Z",
+      normalized_task: "health check runner",
+      status: "failed",
+      result: null,
+      error: { message: "timeout" },
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_082002_002",
+      queued_at: "2026-04-16T08:20:02Z",
+      normalized_task: "health check runner",
+      status: "done",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health check failed"));
+
+    assert.match(result.text, /search=health check/);
+    assert.match(result.text, /status=failed/);
+    assert.match(result.text, /run_20260416_082001_001/);
+    assert.doesNotMatch(result.text, /run_20260416_082002_002/);
+  });
+});
+
+test("handleRunsCommand search AND + kind filter", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_083001_001",
+      queued_at: "2026-04-16T08:30:01Z",
+      normalized_task: "health check runner",
+      kind: "digest",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_083002_002",
+      queued_at: "2026-04-16T08:30:02Z",
+      normalized_task: "health check runner",
+      kind: "health",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health check kind=digest"));
+
+    assert.match(result.text, /search=health check/);
+    assert.match(result.text, /kind=digest/);
+    assert.match(result.text, /run_20260416_083001_001/);
+    assert.doesNotMatch(result.text, /run_20260416_083002_002/);
+  });
+});
+
+test("handleRunsCommand search AND + last cap", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    for (let i = 1; i <= 4; i += 1) {
+      const sec = String(i).padStart(2, "0");
+      await writeRun(runsDir, makeRecord({
+        run_id: `run_20260416_084${sec}_${String(i).padStart(3, "0")}`,
+        queued_at: `2026-04-16T08:40:${sec}Z`,
+        normalized_task: "health check runner",
+        raw_text: `run ${i}`,
+      }));
+    }
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health check last=2"));
+    const runLines = result.text.split("\n").filter((line) => line.includes("`run_"));
+
+    assert.equal(runLines.length, 2);
+    assert.match(result.text, /search=health check/);
+    assert.match(result.text, /last=2/);
+  });
+});
+
+test("handleRunsCommand search AND is order-independent for filters", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260416_085001_001",
+      queued_at: "2026-04-16T08:50:01Z",
+      normalized_task: "health check runner",
+      status: "failed",
+      result: null,
+      error: { message: "timeout" },
+    }));
+
+    const bySearchFirst = await handleRunsCommand(
+      makeContext(runsDir, "search health check failed"),
+    );
+    const byStatusFirst = await handleRunsCommand(
+      makeContext(runsDir, "failed search health check"),
+    );
+
+    assert.match(bySearchFirst.text, /run_20260416_085001_001/);
+    assert.match(byStatusFirst.text, /run_20260416_085001_001/);
+    assert.match(byStatusFirst.text, /search=health check/);
+    assert.match(byStatusFirst.text, /status=failed/);
+  });
+});
+
 test("handleRunsCommand returns usage hint for unrecognized args", async () => {
   await withTempRunsDir(async (runsDir) => {
     const result = await handleRunsCommand(makeContext(runsDir, "unknown-arg"));
 
     assert.match(result.text, /コマンド使い方/);
-    assert.match(result.text, /search <text>/);
+    assert.match(result.text, /search <text\.\.\.>/);
     assert.match(result.text, /kind=<value>/);
     assert.match(result.text, /last=<n>/);
   });
