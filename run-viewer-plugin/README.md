@@ -11,6 +11,7 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 - `/runs health 7d` — health summary for today and the previous 6 days
 - `/runs health YYYY-MM-DD` — health summary for a specific date
 - `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
+- `/runs search <text>` — search recent runs by text
 - `/runs <status>` — filter list by status (failed / done / running / queued / cancelled)
 - `/runs kind=<value>` — filter list by kind (e.g. `kind=health`, `kind=digest`)
 - `/runs <status> kind=<value>` — compound filter: status AND kind (e.g. `failed kind=digest`)
@@ -39,9 +40,9 @@ First valid value wins:
 2. `RUN_VIEWER_HEALTH_TIME_ZONE` environment variable
 3. `UTC` (built-in default)
 
-## `/runs` — filters
+## `/runs` — filters and search
 
-Single or compound filters on the run list.
+Single or compound filters on the run list, plus a standalone text search command.
 
 | Command | Filters by |
 |---------|-----------|
@@ -57,12 +58,15 @@ Single or compound filters on the run list.
 | `/runs last=<n> <status>` | filter by `status`, then return the first `n` matches |
 | `/runs last=<n> kind=<value>` | filter by `kind`, then return the first `n` matches |
 | `/runs last=<n> <status> kind=<value>` | filter by `status` AND `kind`, then return the first `n` matches |
+| `/runs search <text>` | case-insensitive partial match on `normalized_task` and `raw_text` |
 
 Status, kind, and `last=<n>` can be combined in any order. For example, `/runs last=5 failed` and `/runs failed last=5` are equivalent, and `/runs last=5 failed kind=digest` returns the first 5 runs that match both filters.
 
 Duplicate status, kind, or `last=` conditions still return a usage hint.
 
-**Scope:** all `/runs` filters scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
+`/runs search <text>` is standalone in this MVP. It searches `normalized_task` and `raw_text` with case-insensitive partial matching, for example `/runs search health`.
+
+**Scope:** all `/runs` filters and `/runs search <text>` scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
 
 **Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
 
