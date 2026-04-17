@@ -11,8 +11,8 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 - `/runs health 7d` — health summary for today and the previous 6 days
 - `/runs health YYYY-MM-DD` — health summary for a specific date
 - `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
-- `/runs search <text>` — search recent runs by text
-- `/runs search <text> [<status>] [kind=<value>] [last=<n>]` — search with optional filters
+- `/runs search <text...>` — search recent runs by text (multiple keywords are AND-matched)
+- `/runs search <text...> [<status>] [kind=<value>] [last=<n>]` — search with optional filters
 - `/runs <status>` — filter list by status (failed / done / running / queued / cancelled)
 - `/runs kind=<value>` — filter list by kind (e.g. `kind=health`, `kind=digest`)
 - `/runs <status> kind=<value>` — compound filter: status AND kind (e.g. `failed kind=digest`)
@@ -59,8 +59,8 @@ Single or compound filters on the run list, plus a text search command that acce
 | `/runs last=<n> <status>` | filter by `status`, then return the first `n` matches |
 | `/runs last=<n> kind=<value>` | filter by `kind`, then return the first `n` matches |
 | `/runs last=<n> <status> kind=<value>` | filter by `status` AND `kind`, then return the first `n` matches |
-| `/runs search <text>` | case-insensitive partial match on `normalized_task` and `raw_text` |
-| `/runs search <text> [<status>] [kind=<value>] [last=<n>]` | search, then apply status/kind/last |
+| `/runs search <text...>` | case-insensitive partial match on `normalized_task` and `raw_text`; multiple keywords are AND-matched |
+| `/runs search <text...> [<status>] [kind=<value>] [last=<n>]` | search, then apply status/kind/last |
 
 Status, kind, and `last=<n>` can be combined in any order. For example, `/runs last=5 failed` and `/runs failed last=5` are equivalent, and `/runs last=5 failed kind=digest` returns the first 5 runs that match both filters.
 
@@ -68,12 +68,12 @@ Duplicate status, kind, or `last=` conditions still return a usage hint.
 
 ### `/runs search` — text search with optional filters
 
-`/runs search <text>` searches `normalized_task` and `raw_text` with case-insensitive partial matching. All filter modifiers (`<status>`, `kind=<value>`, `last=<n>`) are optional and can be combined in any order.
+`/runs search <text...>` searches `normalized_task` and `raw_text` with case-insensitive partial matching. Provide multiple space-separated keywords to AND-match: every keyword must appear somewhere in the run's task text or raw text for the run to be included. All filter modifiers (`<status>`, `kind=<value>`, `last=<n>`) are optional and can be combined in any order.
 
 **Evaluation order:**
 
 1. Scan the 50 most recent records
-2. Apply text search (`normalized_task` / `raw_text`, case-insensitive partial match)
+2. Apply text search — all keywords must match (`normalized_task` / `raw_text`, case-insensitive AND)
 3. Apply `status` and `kind` filters (AND)
 4. Apply `last=<n>` to cap the final result count
 
@@ -82,13 +82,15 @@ Duplicate status, kind, or `last=` conditions still return a usage hint.
 | Command | What it returns |
 |---------|----------------|
 | `/runs search health` | runs whose task or text contains "health" |
+| `/runs search health check` | runs containing **both** "health" **and** "check" |
+| `/runs search health check failed` | AND-matching runs with `status = failed` |
 | `/runs search health failed` | matching runs with `status = failed` |
 | `/runs search health kind=digest` | matching runs with `kind = digest` |
 | `/runs search health last=5` | up to 5 most recent matching runs |
 | `/runs search health failed kind=digest last=3` | up to 3 most recent runs matching all three conditions |
 | `/runs failed search health` | same as above — modifiers are order-independent |
 
-**Scope:** all `/runs` filters and `/runs search <text>` scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
+**Scope:** all `/runs` filters and `/runs search <text...>` scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
 
 **Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
 
