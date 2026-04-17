@@ -875,11 +875,36 @@ test("parseSearchFilter recognizes search with optional filters", () => {
 
 test("parseSearchFilter rejects invalid or duplicate search forms", () => {
   assert.equal(parseSearchFilter("search"), null);
-  assert.equal(parseSearchFilter("search failed"), null);
   assert.equal(parseSearchFilter("search health search digest"), null);
   assert.equal(parseSearchFilter("search health failed done"), null);
   assert.equal(parseSearchFilter("search health kind=a kind=b"), null);
   assert.equal(parseSearchFilter("search health last=5 last=10"), null);
+});
+
+test("parseSearchFilter allows status keywords as search query", () => {
+  // The token immediately after "search" is unconditionally treated as query,
+  // even when it matches a status keyword.
+  assert.deepEqual(
+    parseSearchFilter("search failed"),
+    { type: "search", query: "failed", status: null, kind: null, last: null },
+  );
+  assert.deepEqual(
+    parseSearchFilter("search done"),
+    { type: "search", query: "done", status: null, kind: null, last: null },
+  );
+  assert.deepEqual(
+    parseSearchFilter("search failed kind=digest"),
+    { type: "search", query: "failed", status: null, kind: "digest", last: null },
+  );
+  assert.deepEqual(
+    parseSearchFilter("search failed last=5"),
+    { type: "search", query: "failed", status: null, kind: null, last: 5 },
+  );
+  // status keyword as query, different status keyword as filter
+  assert.deepEqual(
+    parseSearchFilter("search failed done"),
+    { type: "search", query: "failed", status: "done", kind: null, last: null },
+  );
 });
 
 test("handleRunsCommand filters by status: shows only matching runs", async () => {
@@ -1221,10 +1246,67 @@ test("handleRunsCommand search returns usage for incomplete input", async () => 
 test("handleRunsCommand search returns usage for duplicate or invalid search forms", async () => {
   await withTempRunsDir(async (runsDir) => {
     const duplicateSearch = await handleRunsCommand(makeContext(runsDir, "search health search digest"));
-    const missingQuery = await handleRunsCommand(makeContext(runsDir, "search failed"));
 
     assert.match(duplicateSearch.text, /search の使い方が不正です/);
-    assert.match(missingQuery.text, /search の使い方が不正です/);
+  });
+});
+
+test("handleRunsCommand search accepts status keyword as query", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_090001_001",
+      queued_at: "2026-04-15T09:00:01Z",
+      normalized_task: "run failed jobs",
+      status: "done",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_090002_002",
+      queued_at: "2026-04-15T09:00:02Z",
+      normalized_task: "other task",
+      status: "done",
+    }));
+
+    // "failed" is a status keyword but must be treated as query here
+    const result = await handleRunsCommand(makeContext(runsDir, "search failed"));
+
+    assert.doesNotMatch(result.text, /使い方が不正/);
+    assert.match(result.text, /search=failed/);
+    assert.match(result.text, /run_20260415_090001_001/);
+    assert.doesNotMatch(result.text, /run_20260415_090002_002/);
+  });
+});
+
+test("handleRunsCommand search uses status keyword as query, other keyword as filter", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_091001_001",
+      queued_at: "2026-04-15T09:10:01Z",
+      normalized_task: "failed jobs cleanup",
+      status: "done",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_091002_002",
+      queued_at: "2026-04-15T09:10:02Z",
+      normalized_task: "failed jobs cleanup",
+      status: "failed",
+      result: null,
+      error: { message: "unexpected" },
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_091003_003",
+      queued_at: "2026-04-15T09:10:03Z",
+      normalized_task: "unrelated",
+      status: "done",
+    }));
+
+    // "failed" as query, "done" as status filter
+    const result = await handleRunsCommand(makeContext(runsDir, "search failed done"));
+
+    assert.match(result.text, /search=failed/);
+    assert.match(result.text, /status=done/);
+    assert.match(result.text, /run_20260415_091001_001/);
+    assert.doesNotMatch(result.text, /run_20260415_091002_002/);
+    assert.doesNotMatch(result.text, /run_20260415_091003_003/);
   });
 });
 
