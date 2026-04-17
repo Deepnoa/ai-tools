@@ -636,38 +636,65 @@ function formatHealthSummary(summary) {
 // ── Command handler ────────────────────────────────────────────────────────────
 
 /**
- * Parse a single list filter from /runs args.
- * Returns a filter object when the arg is a recognized filter, or null otherwise.
+ * Parse a compound list filter from /runs args.
+ * Supports up to two conditions: one status keyword and/or one kind= value.
+ * last=N is standalone and cannot be combined with other conditions.
  *
- *   { type: "status", value: "failed" }   — /runs failed
- *   { type: "kind",   value: "health" }   — /runs kind=health
- *   { type: "last",   value: 10 }         — /runs last=10
+ * Returns one of:
+ *   { type: "compound", status: string|null, kind: string|null }
+ *   { type: "last",     value: number }
+ *   null — not a recognized filter
+ *
+ * Examples:
+ *   "failed"              → { type: "compound", status: "failed", kind: null }
+ *   "kind=health"         → { type: "compound", status: null,     kind: "health" }
+ *   "failed kind=digest"  → { type: "compound", status: "failed", kind: "digest" }
+ *   "kind=digest failed"  → { type: "compound", status: "failed", kind: "digest" }
+ *   "last=10"             → { type: "last", value: 10 }
+ *   "failed done"         → null  (duplicate status)
+ *   "kind=a kind=b"       → null  (duplicate kind)
  */
 function parseListFilter(args) {
   const trimmed = (args ?? "").trim();
 
-  if (STATUS_VALUES.has(trimmed)) {
-    return { type: "status", value: trimmed };
-  }
-
-  const kindMatch = trimmed.match(/^kind=([A-Za-z0-9_-]+)$/);
-  if (kindMatch) {
-    return { type: "kind", value: kindMatch[1] };
-  }
-
+  // last= is always standalone — cannot be combined
   const lastMatch = trimmed.match(/^last=(\d+)$/);
   if (lastMatch) {
     const n = Number(lastMatch[1]);
-    if (Number.isInteger(n) && n > 0) {
-      return { type: "last", value: n };
+    if (Number.isInteger(n) && n > 0) return { type: "last", value: n };
+    return null;
+  }
+
+  // Parse space-separated tokens: at most one status keyword and one kind= value
+  const tokens = trimmed.split(/\s+/);
+  let status = null;
+  let kind = null;
+
+  for (const token of tokens) {
+    if (STATUS_VALUES.has(token)) {
+      if (status !== null) return null; // duplicate status
+      status = token;
+    } else {
+      const kindMatch = token.match(/^kind=([A-Za-z0-9_-]+)$/);
+      if (kindMatch) {
+        if (kind !== null) return null; // duplicate kind
+        kind = kindMatch[1];
+      } else {
+        return null; // unrecognized token
+      }
     }
   }
 
-  return null;
+  if (status === null && kind === null) return null;
+  return { type: "compound", status, kind };
 }
 
 /**
- * Handle filtered list commands: /runs <status>, /runs kind=<v>, /runs last=<n>.
+ * Handle filtered list commands:
+ *   /runs <status>               — single status filter
+ *   /runs kind=<v>               — single kind filter
+ *   /runs <status> kind=<v>      — compound status + kind filter
+ *   /runs last=<n>               — count limit
  */
 async function handleRunsFiltered(ctx, filter) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
@@ -682,17 +709,19 @@ async function handleRunsFiltered(ctx, filter) {
     return { text: formatRunList(runs, `last=${filter.value}`) };
   }
 
-  // status / kind: scan up to MAX_LIST_LIMIT, filter in-memory, cap at configLimit
+  // compound: status and/or kind — scan MAX_LIST_LIMIT, filter in-memory, cap at configLimit
   const allRuns = await listRuns(runsDir, MAX_LIST_LIMIT);
   const filtered = allRuns.filter((run) => {
-    if (filter.type === "status") return run.status === filter.value;
-    if (filter.type === "kind") return run.kind === filter.value;
+    if (filter.status !== null && run.status !== filter.status) return false;
+    if (filter.kind !== null && run.kind !== filter.kind) return false;
     return true;
   });
   const capped = filtered.slice(0, configLimit);
-  const filterLabel =
-    filter.type === "status" ? `status=${filter.value}` : `kind=${filter.value}`;
-  return { text: formatRunList(capped, filterLabel) };
+
+  const parts = [];
+  if (filter.status) parts.push(`status=${filter.status}`);
+  if (filter.kind) parts.push(`kind=${filter.kind}`);
+  return { text: formatRunList(capped, parts.join(" / ")) };
 }
 
 /**
@@ -857,6 +886,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
+      "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
       "• `/runs last=<n>` — 件数指定",
     ].join("\n"),
   };
