@@ -989,6 +989,33 @@ test("handleRunsCommand compound filter: empty result shows compound label", asy
   });
 });
 
+// ── Compound rejection E2E tests ──────────────────────────────────────────────
+
+test("handleRunsCommand returns usage for duplicate status (failed done)", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "failed done"));
+
+    assert.match(result.text, /コマンド使い方/);
+    assert.match(result.text, /複合フィルタ/);
+  });
+});
+
+test("handleRunsCommand returns usage for duplicate kind tokens", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "kind=health kind=digest"));
+
+    assert.match(result.text, /コマンド使い方/);
+  });
+});
+
+test("handleRunsCommand returns usage for last= combined with status filter", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "last=5 failed"));
+
+    assert.match(result.text, /コマンド使い方/);
+  });
+});
+
 test("handleRunsCommand existing /runs list behavior is unchanged by filter addition", async () => {
   await withTempRunsDir(async (runsDir) => {
     await writeRun(runsDir, makeRecord({
