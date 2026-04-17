@@ -13,6 +13,7 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 - `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
 - `/runs <status>` — filter list by status (failed / done / running / queued / cancelled)
 - `/runs kind=<value>` — filter list by kind (e.g. `kind=health`, `kind=digest`)
+- `/runs <status> kind=<value>` — compound filter: status AND kind (e.g. `failed kind=digest`)
 - `/runs last=<n>` — limit list to n most recent records
 
 Unknown or malformed arguments return a usage hint.
@@ -40,7 +41,7 @@ First valid value wins:
 
 ## `/runs` — filters
 
-Single-condition filters on the run list.
+Single or compound filters on the run list.
 
 | Command | Filters by |
 |---------|-----------|
@@ -51,7 +52,10 @@ Single-condition filters on the run list.
 | `/runs cancelled` | `status = cancelled` |
 | `/runs kind=health` | `kind = health` |
 | `/runs kind=<value>` | any `kind` value |
+| `/runs <status> kind=<value>` | `status` AND `kind` (e.g. `failed kind=digest`) |
 | `/runs last=<n>` | newest n records (overrides `listLimit`) |
+
+Compound filters accept status and kind in any order (`failed kind=digest` = `kind=digest failed`). Duplicate conditions and `last=` combined with other filters return a usage hint instead.
 
 **Scope:** status and kind filters scan the 50 most recent records. Records outside that window are not searched.
 
