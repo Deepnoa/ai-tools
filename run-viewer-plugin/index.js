@@ -886,6 +886,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
+      "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
       "• `/runs last=<n>` — 件数指定",
     ].join("\n"),
   };
