@@ -4,13 +4,36 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 
 ## Commands
 
-- `/runs` - list recent run records
-- `/runs <run_id>` - show detail for a single run record
-- `/runs retry <run_id>` - queue a retry for a failed or cancelled run
-- `/runs health` - show today's run health summary
-- `/runs health 7d` - show a relative health summary that includes today and the previous 6 days
-- `/runs health YYYY-MM-DD` - show a health summary for one explicit calendar date
-- `/runs health YYYY-MM-DD..YYYY-MM-DD` - show a health summary for an explicit date range
+- `/runs` — list recent run records (newest first)
+- `/runs <run_id>` — show full detail for a single run
+- `/runs retry <run_id>` — re-queue a `failed` or `cancelled` run
+- `/runs health` — run health summary for today
+- `/runs health 7d` — health summary for today and the previous 6 days
+- `/runs health YYYY-MM-DD` — health summary for a specific date
+- `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
+
+Unknown or malformed arguments return a usage hint.
+
+## `/runs health` — date resolution
+
+All dates are resolved in the configured timezone.
+
+| Form | Example | Meaning |
+|------|---------|---------|
+| _(none)_ | `/runs health` | Today in the resolved timezone |
+| `Nd` | `/runs health 7d` | Today + the previous N−1 days |
+| `YYYY-MM-DD` | `/runs health 2026-04-15` | One specific calendar date |
+| `YYYY-MM-DD..YYYY-MM-DD` | `/runs health 2026-04-01..2026-04-15` | Inclusive date range |
+
+Non-calendar dates, malformed ranges, and reversed ranges are rejected — a usage message is returned instead of silent normalization. The active timezone is shown in every health summary output.
+
+### Timezone resolution
+
+First valid value wins:
+
+1. `healthTimeZone` in plugin config
+2. `RUN_VIEWER_HEALTH_TIME_ZONE` environment variable
+3. `UTC` (built-in default)
 
 ## Config
 
@@ -33,36 +56,19 @@ Set under `plugins.entries.run-viewer.config`:
 }
 ```
 
-### `healthTimeZone`
-
-- Optional IANA timezone name such as `UTC`, `Asia/Tokyo`, or `America/Los_Angeles`
-- Used only by `/runs health` to decide what counts as "today" and how date ranges are interpreted
-- If omitted, `/runs health` uses `UTC`
-- If invalid, the plugin falls back in this order: config value, `RUN_VIEWER_HEALTH_TIME_ZONE`, then `UTC`
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `runsDir` | string | `~/.openclaw/runs` | Run store root directory |
+| `listLimit` | number | `10` | Max records returned by `/runs` (hard cap: 50) |
+| `healthTimeZone` | string | — | IANA timezone for `/runs health` (e.g. `Asia/Tokyo`, `America/Los_Angeles`) |
 
 ## Environment Variable
 
-You can also set the timezone for `/runs health` with `RUN_VIEWER_HEALTH_TIME_ZONE`:
+`RUN_VIEWER_HEALTH_TIME_ZONE` — fallback timezone for `/runs health` when `healthTimeZone` is not configured or is invalid.
 
 ```bash
 export RUN_VIEWER_HEALTH_TIME_ZONE=Asia/Tokyo
 ```
-
-- This is used when `healthTimeZone` is not set, or when `healthTimeZone` is invalid
-- If both the config value and the environment variable are invalid, `/runs health` falls back to `UTC`
-
-## `/runs health` Date Basis
-
-- `/runs health` supports these forms:
-- `/runs health`
-- `/runs health 7d`
-- `/runs health YYYY-MM-DD`
-- `/runs health YYYY-MM-DD..YYYY-MM-DD`
-- The date or date range is always resolved in the configured timezone
-- Single-date and explicit-range inputs must use real calendar dates
-- Invalid inputs fall back to the command usage message instead of being normalized silently
-- The default date basis is `UTC`
-- The health summary output includes the active timezone so the "today" or range basis is visible at runtime
 
 ## Install for dev
 
