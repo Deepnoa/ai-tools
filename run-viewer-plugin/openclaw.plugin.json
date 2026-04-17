@@ -7,6 +7,10 @@
     },
     "listLimit": {
       "label": "Default List Limit"
+    },
+    "healthTimeZone": {
+      "label": "Health Timezone",
+      "placeholder": "UTC or Asia/Tokyo"
     }
   },
   "configSchema": {
@@ -15,7 +19,8 @@
     "properties": {
       "enabled": { "type": "boolean" },
       "runsDir": { "type": "string" },
-      "listLimit": { "type": "number" }
+      "listLimit": { "type": "number" },
+      "healthTimeZone": { "type": "string" }
     }
   }
 }
