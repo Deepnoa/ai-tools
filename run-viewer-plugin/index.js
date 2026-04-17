@@ -25,6 +25,7 @@ import path from "node:path";
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
+const STATUS_VALUES = new Set(["queued", "running", "done", "failed", "cancelled"]);
 const DEFAULT_HEALTH_TIME_ZONE = "UTC";
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // ── Path resolution ────────────────────────────────────────────────────────────
@@ -412,13 +413,20 @@ function fmtElapsed(queuedAt, doneAt) {
 
 /**
  * Format the list of runs as Slack-friendly text.
+ * @param {Array} runs
+ * @param {string|null} filterLabel - shown in the header when a filter is active (e.g. "status=failed")
  */
-function formatRunList(runs) {
+function formatRunList(runs, filterLabel = null) {
   if (runs.length === 0) {
-    return "実行記録が見つかりません。";
+    return filterLabel
+      ? `実行記録が見つかりません (${filterLabel})。`
+      : "実行記録が見つかりません。";
   }
 
-  const lines = [`*直近の run 記録 (${runs.length}件)*`];
+  const header = filterLabel
+    ? `*run 記録 (${runs.length}件 / ${filterLabel})*`
+    : `*直近の run 記録 (${runs.length}件)*`;
+  const lines = [header];
   for (const run of runs) {
     const emoji = STATUS_EMOJI[run.status] ?? "❓";
     const date = run.queued_at ? run.queued_at.slice(0, 10) : "?";
@@ -628,6 +636,66 @@ function formatHealthSummary(summary) {
 // ── Command handler ────────────────────────────────────────────────────────────
 
 /**
+ * Parse a single list filter from /runs args.
+ * Returns a filter object when the arg is a recognized filter, or null otherwise.
+ *
+ *   { type: "status", value: "failed" }   — /runs failed
+ *   { type: "kind",   value: "health" }   — /runs kind=health
+ *   { type: "last",   value: 10 }         — /runs last=10
+ */
+function parseListFilter(args) {
+  const trimmed = (args ?? "").trim();
+
+  if (STATUS_VALUES.has(trimmed)) {
+    return { type: "status", value: trimmed };
+  }
+
+  const kindMatch = trimmed.match(/^kind=([A-Za-z0-9_-]+)$/);
+  if (kindMatch) {
+    return { type: "kind", value: kindMatch[1] };
+  }
+
+  const lastMatch = trimmed.match(/^last=(\d+)$/);
+  if (lastMatch) {
+    const n = Number(lastMatch[1]);
+    if (Number.isInteger(n) && n > 0) {
+      return { type: "last", value: n };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Handle filtered list commands: /runs <status>, /runs kind=<v>, /runs last=<n>.
+ */
+async function handleRunsFiltered(ctx, filter) {
+  const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
+  const runsDir = resolveRunsDir(cfg);
+  const configLimit =
+    typeof cfg.listLimit === "number" && cfg.listLimit > 0
+      ? cfg.listLimit
+      : DEFAULT_LIST_LIMIT;
+
+  if (filter.type === "last") {
+    const runs = await listRuns(runsDir, filter.value);
+    return { text: formatRunList(runs, `last=${filter.value}`) };
+  }
+
+  // status / kind: scan up to MAX_LIST_LIMIT, filter in-memory, cap at configLimit
+  const allRuns = await listRuns(runsDir, MAX_LIST_LIMIT);
+  const filtered = allRuns.filter((run) => {
+    if (filter.type === "status") return run.status === filter.value;
+    if (filter.type === "kind") return run.kind === filter.value;
+    return true;
+  });
+  const capped = filtered.slice(0, configLimit);
+  const filterLabel =
+    filter.type === "status" ? `status=${filter.value}` : `kind=${filter.value}`;
+  return { text: formatRunList(capped, filterLabel) };
+}
+
+/**
  * Handle the /runs command with no arguments (list mode).
  */
 async function handleRunsList(ctx) {
@@ -774,6 +842,11 @@ async function handleRunsCommand(ctx) {
     return handleRunsDetail(ctx, args);
   }
 
+  const filter = parseListFilter(args);
+  if (filter) {
+    return handleRunsFiltered(ctx, filter);
+  }
+
   // Unknown sub-command — show help
   return {
     text: [
@@ -782,6 +855,9 @@ async function handleRunsCommand(ctx) {
       "• `/runs <run_id>` — run 詳細",
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
+      "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
+      "• `/runs kind=<value>` — kind でフィルタ",
+      "• `/runs last=<n>` — 件数指定",
     ].join("\n"),
   };
 }
@@ -814,6 +890,7 @@ export {
   loadRunsForDate,
   listRuns,
   getHealthDate,
+  parseListFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
   resolveRunsDir,
