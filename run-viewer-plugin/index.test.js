@@ -14,6 +14,7 @@ import plugin, {
   listRuns,
   loadRunsForHealthRange,
   loadRunsForDate,
+  matchesRunSearch,
   parseListFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
@@ -836,6 +837,17 @@ test("parseListFilter returns null for unrecognized or invalid input", () => {
   assert.equal(parseListFilter(""), null);            // empty (handled by list branch)
 });
 
+test("matchesRunSearch matches normalized_task and raw_text case-insensitively", () => {
+  const run = makeRecord({
+    normalized_task: "HealthCheck",
+    raw_text: "Digest health overview",
+  });
+
+  assert.equal(matchesRunSearch(run, "health"), true);
+  assert.equal(matchesRunSearch(run, "DIGEST"), true);
+  assert.equal(matchesRunSearch(run, "missing"), false);
+});
+
 test("handleRunsCommand filters by status: shows only matching runs", async () => {
   await withTempRunsDir(async (runsDir) => {
     await writeRun(runsDir, makeRecord({
@@ -930,11 +942,84 @@ test("handleRunsCommand last=N limits result count", async () => {
   });
 });
 
+test("handleRunsCommand search matches normalized_task and raw_text in newest-first order", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_050001_001",
+      queued_at: "2026-04-15T05:00:01Z",
+      normalized_task: "health-check",
+      raw_text: "no keyword here",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_050002_002",
+      queued_at: "2026-04-15T05:00:02Z",
+      normalized_task: "digest",
+      raw_text: "Run HEALTH summary",
+    }));
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_050003_003",
+      queued_at: "2026-04-15T05:00:03Z",
+      normalized_task: "digest",
+      raw_text: "completely unrelated",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health"));
+    const runLines = result.text.split("\n").filter((line) => line.includes("`run_"));
+
+    assert.equal(runLines.length, 2);
+    assert.match(result.text, /search=health/);
+    assert.match(runLines[0], /run_20260415_050002_002/);
+    assert.match(runLines[1], /run_20260415_050001_001/);
+    assert.doesNotMatch(result.text, /run_20260415_050003_003/);
+  });
+});
+
+test("handleRunsCommand search is case-insensitive", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_060001_001",
+      queued_at: "2026-04-15T06:00:01Z",
+      normalized_task: "Digest",
+      raw_text: "nightly rollup",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search digest"));
+
+    assert.match(result.text, /run_20260415_060001_001/);
+  });
+});
+
+test("handleRunsCommand search returns empty-list message when there is no hit", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(runsDir, makeRecord({
+      run_id: "run_20260415_070001_001",
+      queued_at: "2026-04-15T07:00:01Z",
+      normalized_task: "digest",
+      raw_text: "nightly rollup",
+    }));
+
+    const result = await handleRunsCommand(makeContext(runsDir, "search health"));
+
+    assert.match(result.text, /実行記録が見つかりません/);
+    assert.match(result.text, /search=health/);
+  });
+});
+
+test("handleRunsCommand search returns usage for incomplete input", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "search"));
+
+    assert.match(result.text, /search の使い方が不正です/);
+    assert.match(result.text, /\/runs search <text>/);
+  });
+});
+
 test("handleRunsCommand returns usage hint for unrecognized args", async () => {
   await withTempRunsDir(async (runsDir) => {
     const result = await handleRunsCommand(makeContext(runsDir, "unknown-arg"));
 
     assert.match(result.text, /コマンド使い方/);
+    assert.match(result.text, /search <text>/);
     assert.match(result.text, /kind=<value>/);
     assert.match(result.text, /last=<n>/);
   });

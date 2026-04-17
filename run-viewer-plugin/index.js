@@ -776,6 +776,28 @@ async function handleRunsFiltered(ctx, filter) {
   return { text: formatRunList(capped, parts.join(" / ")) };
 }
 
+function matchesRunSearch(run, query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return false;
+
+  return [
+    typeof run.normalized_task === "string" ? run.normalized_task : "",
+    typeof run.raw_text === "string" ? run.raw_text : "",
+  ].some((value) => value.toLowerCase().includes(needle));
+}
+
+/**
+ * Handle /runs search <text>.
+ */
+async function handleRunsSearch(ctx, query) {
+  const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
+  const runsDir = resolveRunsDir(cfg);
+  const matched = (await listRuns(runsDir, MAX_LIST_LIMIT))
+    .filter((run) => matchesRunSearch(run, query));
+
+  return { text: formatRunList(matched, `search=${query}`) };
+}
+
 /**
  * Handle the /runs command with no arguments (list mode).
  */
@@ -922,6 +944,20 @@ async function handleRunsCommand(ctx) {
     return handleRunsRetry(ctx, retryMatch[1]);
   }
 
+  const searchMatch = args.match(/^search(?:\s+(.+))?$/);
+  if (searchMatch) {
+    const query = searchMatch[1]?.trim() ?? "";
+    if (!query) {
+      return {
+        text: [
+          "search の使い方が不正です。",
+          "使い方: `/runs search <text>`",
+        ].join("\n"),
+      };
+    }
+    return handleRunsSearch(ctx, query);
+  }
+
   if (RUN_ID_RE.test(args)) {
     return handleRunsDetail(ctx, args);
   }
@@ -939,6 +975,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs <run_id>` — run 詳細",
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
+      "• `/runs search <text>` — normalized_task / raw_text を部分一致検索",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
@@ -978,6 +1015,7 @@ export {
   loadRunsForDate,
   listRuns,
   getHealthDate,
+  matchesRunSearch,
   parseListFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
