@@ -72,7 +72,7 @@ Duplicate status, kind, or `last=` conditions still return a usage hint.
 
 **Evaluation order:**
 
-1. Scan the 50 most recent records
+1. Scan the `scanLimit` most recent records (default: 100)
 2. Apply text search — all keywords must match (`normalized_task` / `raw_text`, case-insensitive AND)
 3. Apply `status` and `kind` filters (AND)
 4. Apply `last=<n>` to cap the final result count
@@ -90,7 +90,7 @@ Duplicate status, kind, or `last=` conditions still return a usage hint.
 | `/runs search health failed kind=digest last=3` | up to 3 most recent runs matching all three conditions |
 | `/runs failed search health` | same as above — modifiers are order-independent |
 
-**Scope:** all `/runs` filters and `/runs search <text...>` scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
+**Scope:** all `/runs` filters and `/runs search <text...>` scan at most `scanLimit` recent records (default: 100, configurable up to 1000). `last=<n>` and `listLimit` control the number of displayed results after filtering; they do not affect the scan window.
 
 **Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
 
@@ -107,6 +107,7 @@ Set under `plugins.entries.run-viewer.config`:
         "config": {
           "runsDir": "~/.openclaw/runs",
           "listLimit": 10,
+          "scanLimit": 100,
           "healthTimeZone": "Asia/Tokyo"
         }
       }
@@ -119,14 +120,30 @@ Set under `plugins.entries.run-viewer.config`:
 |-----|------|---------|-------------|
 | `runsDir` | string | `~/.openclaw/runs` | Run store root directory |
 | `listLimit` | number | `10` | Max records returned by `/runs` (hard cap: 50) |
+| `scanLimit` | number | `100` | Number of recent runs to scan for filter and search operations (hard cap: 1000) |
 | `healthTimeZone` | string | — | IANA timezone for `/runs health` (e.g. `Asia/Tokyo`, `America/Los_Angeles`) |
 
-## Environment Variable
+### Scan window vs. display limit
+
+`scanLimit` and `listLimit` / `last=<n>` serve different purposes:
+
+- **`scanLimit`** — how many records are read from disk when running a filter or search. A larger value lets you find older matching records at the cost of more disk reads. Applies to all filter/search commands (`/runs failed`, `/runs kind=<value>`, `/runs search <text...>`, and combinations).
+- **`listLimit` / `last=<n>`** — how many results are shown after filtering. These do not expand the scan window.
+
+Plain `/runs` (no arguments) reads only `listLimit` records and is not affected by `scanLimit`.
+
+## Environment Variables
 
 `RUN_VIEWER_HEALTH_TIME_ZONE` — fallback timezone for `/runs health` when `healthTimeZone` is not configured or is invalid.
 
 ```bash
 export RUN_VIEWER_HEALTH_TIME_ZONE=Asia/Tokyo
+```
+
+`RUN_VIEWER_SCAN_LIMIT` — fallback scan limit for filter and search operations when `scanLimit` is not set in config. The value in config takes precedence; this environment variable is used only when `scanLimit` is absent from the plugin config.
+
+```bash
+export RUN_VIEWER_SCAN_LIMIT=500
 ```
 
 ## Install for dev
