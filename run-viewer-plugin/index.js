@@ -26,6 +26,7 @@ const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
 const DEFAULT_HEALTH_TIME_ZONE = "UTC";
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // ── Path resolution ────────────────────────────────────────────────────────────
 
 /**
@@ -82,18 +83,22 @@ function resolveHealthTimeZone(cfg) {
  */
 function getHealthDate(now = new Date(), cfg) {
   const timeZone = resolveHealthTimeZone(cfg);
+  return {
+    date: formatDateInTimeZone(now, timeZone),
+    timeZone,
+  };
+}
+
+function formatDateInTimeZone(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(now);
+  }).formatToParts(date);
   const getPart = (type) => parts.find((part) => part.type === type)?.value ?? "00";
 
-  return {
-    date: `${getPart("year")}-${getPart("month")}-${getPart("day")}`,
-    timeZone,
-  };
+  return `${getPart("year")}-${getPart("month")}-${getPart("day")}`;
 }
 
 // ── Run store reader ───────────────────────────────────────────────────────────
@@ -172,6 +177,100 @@ async function loadRunsForDate(runsDir, dateStr, limit) {
   }
 
   return records;
+}
+
+function shiftDate(dateStr, deltaDays) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+  return date.toISOString().slice(0, 10);
+}
+
+function enumerateDates(startDate, endDate) {
+  const dates = [];
+  for (let current = startDate; current <= endDate; current = shiftDate(current, 1)) {
+    dates.push(current);
+  }
+  return dates;
+}
+
+function getRunHealthDate(run, timeZone) {
+  const timestamp = run.queued_at ?? run.started_at ?? run.done_at ?? null;
+  if (!timestamp) return null;
+
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return formatDateInTimeZone(parsed, timeZone);
+}
+
+async function loadRunsForHealthRange(runsDir, startDate, endDate, timeZone) {
+  const candidateDates = enumerateDates(shiftDate(startDate, -1), shiftDate(endDate, 1));
+  const runs = [];
+
+  for (const date of candidateDates) {
+    const dateRuns = await loadRunsForDate(runsDir, date);
+    for (const run of dateRuns) {
+      const runDate = getRunHealthDate(run, timeZone);
+      if (runDate && runDate >= startDate && runDate <= endDate) {
+        runs.push(run);
+      }
+    }
+  }
+
+  runs.sort((left, right) => {
+    const delta = getRunTimestampMs(right) - getRunTimestampMs(left);
+    if (delta !== 0) return delta;
+    return String(right.run_id ?? "").localeCompare(String(left.run_id ?? ""));
+  });
+
+  return runs;
+}
+
+function resolveHealthRange(spec, now = new Date(), cfg) {
+  const { date: today, timeZone } = getHealthDate(now, cfg);
+  const trimmed = spec?.trim() ?? "";
+  if (!trimmed) {
+    return {
+      startDate: today,
+      endDate: today,
+      label: today,
+      timeZone,
+    };
+  }
+
+  const relativeMatch = trimmed.match(/^(\d+)d$/);
+  if (relativeMatch) {
+    const days = Number(relativeMatch[1]);
+    if (Number.isInteger(days) && days > 0) {
+      const startDate = shiftDate(today, 1 - days);
+      return {
+        startDate,
+        endDate: today,
+        label: `${startDate}..${today}`,
+        timeZone,
+      };
+    }
+  }
+
+  if (ISO_DATE_RE.test(trimmed)) {
+    return {
+      startDate: trimmed,
+      endDate: trimmed,
+      label: trimmed,
+      timeZone,
+    };
+  }
+
+  const rangeMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+  if (rangeMatch && rangeMatch[1] <= rangeMatch[2]) {
+    return {
+      startDate: rangeMatch[1],
+      endDate: rangeMatch[2],
+      label: `${rangeMatch[1]}..${rangeMatch[2]}`,
+      timeZone,
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -425,9 +524,9 @@ function getRunTimestampMs(run) {
 }
 
 /**
- * Build a minimal health summary from today's run store.
+ * Build a minimal health summary from a run store slice.
  */
-function summarizeRunsHealth(runs, today) {
+function summarizeRunsHealth(runs, periodLabel) {
   const counts = {
     queued: 0,
     running: 0,
@@ -465,7 +564,7 @@ function summarizeRunsHealth(runs, today) {
     : "ok";
 
   return {
-    date: today,
+    date: periodLabel,
     timeZone: null,
     total: runs.length,
     counts,
@@ -475,7 +574,7 @@ function summarizeRunsHealth(runs, today) {
 }
 
 /**
- * Format today's health summary as Slack-friendly text.
+ * Format a health summary as Slack-friendly text.
  */
 function formatHealthSummary(summary) {
   const lines = [];
@@ -601,16 +700,30 @@ async function handleRunsRetry(ctx, runId) {
 }
 
 /**
- * Handle /runs health.
+ * Handle /runs health with optional period arguments.
  */
-async function handleRunsHealth(ctx) {
+async function handleRunsHealth(ctx, spec = "") {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = resolveRunsDir(cfg);
-  const { date: today, timeZone } = getHealthDate(ctx.now ?? new Date(), cfg);
-  const runs = await loadRunsForDate(runsDir, today);
+  const range = resolveHealthRange(spec, ctx.now ?? new Date(), cfg);
+  if (!range) {
+    return {
+      text: [
+        "health の期間指定が不正です。",
+        "使い方: `/runs health` | `/runs health 7d` | `/runs health 2026-04-15` | `/runs health 2026-04-15..2026-04-17`",
+      ].join("\n"),
+    };
+  }
+
+  const runs = await loadRunsForHealthRange(
+    runsDir,
+    range.startDate,
+    range.endDate,
+    range.timeZone,
+  );
   const summary = {
-    ...summarizeRunsHealth(runs, today),
-    timeZone,
+    ...summarizeRunsHealth(runs, range.label),
+    timeZone: range.timeZone,
   };
   return { text: formatHealthSummary(summary) };
 }
@@ -626,8 +739,9 @@ async function handleRunsCommand(ctx) {
     return handleRunsList(ctx);
   }
 
-  if (args === "health") {
-    return handleRunsHealth(ctx);
+  const healthMatch = args.match(/^health(?:\s+(.+))?$/);
+  if (healthMatch) {
+    return handleRunsHealth(ctx, healthMatch[1] ?? "");
   }
 
   const retryMatch = args.match(/^retry\s+(run_[A-Za-z0-9_]+)$/);
@@ -646,7 +760,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs` — 直近の run 一覧",
       "• `/runs <run_id>` — run 詳細",
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
-      "• `/runs health` — 今日の run health summary",
+      "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
     ].join("\n"),
   };
 }
@@ -675,9 +789,11 @@ export {
   formatRunDetail,
   formatRunList,
   handleRunsCommand,
+  loadRunsForHealthRange,
   loadRunsForDate,
   listRuns,
   getHealthDate,
+  resolveHealthRange,
   resolveHealthTimeZone,
   resolveRunsDir,
   summarizeRunsHealth,

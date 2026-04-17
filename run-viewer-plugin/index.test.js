@@ -12,7 +12,9 @@ import plugin, {
   getHealthDate,
   handleRunsCommand,
   listRuns,
+  loadRunsForHealthRange,
   loadRunsForDate,
+  resolveHealthRange,
   resolveHealthTimeZone,
   summarizeRunsHealth,
   writeRunRecord,
@@ -415,6 +417,60 @@ test("getHealthDate uses configured timezone to decide today's date", () => {
   });
 });
 
+test("resolveHealthRange supports relative and explicit ranges", () => {
+  const now = new Date("2026-04-15T23:30:00Z");
+
+  assert.deepEqual(resolveHealthRange("", now, {}), {
+    startDate: "2026-04-15",
+    endDate: "2026-04-15",
+    label: "2026-04-15",
+    timeZone: "UTC",
+  });
+  assert.deepEqual(resolveHealthRange("3d", now, {}), {
+    startDate: "2026-04-13",
+    endDate: "2026-04-15",
+    label: "2026-04-13..2026-04-15",
+    timeZone: "UTC",
+  });
+  assert.deepEqual(resolveHealthRange("2026-04-10..2026-04-12", now, {}), {
+    startDate: "2026-04-10",
+    endDate: "2026-04-12",
+    label: "2026-04-10..2026-04-12",
+    timeZone: "UTC",
+  });
+});
+
+test("loadRunsForHealthRange filters by health timezone date instead of directory name alone", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260415_160000_tokyo",
+        queued_at: "2026-04-15T16:00:00Z",
+        status: "done",
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260416_150000_tokyo",
+        queued_at: "2026-04-16T15:00:00Z",
+        status: "done",
+      }),
+    );
+
+    const runs = await loadRunsForHealthRange(
+      runsDir,
+      "2026-04-16",
+      "2026-04-16",
+      "Asia/Tokyo",
+    );
+
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].run_id, "run_20260415_160000_tokyo");
+  });
+});
+
 test("handleRunsCommand health does not undercount when a day has more than 200 runs", async () => {
   await withTempRunsDir(async (runsDir) => {
     const today = new Date().toISOString().slice(0, 10);
@@ -564,5 +620,101 @@ test("handleRunsCommand health uses configured timezone at date boundaries", asy
     assert.match(result.text, /timezone: Asia\/Tokyo/);
     assert.match(result.text, /done: 1/);
     assert.match(result.text, /total: 1/);
+  });
+});
+
+test("handleRunsCommand health supports relative day ranges", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260413_120001_old",
+        queued_at: "2026-04-13T12:00:01Z",
+        status: "done",
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260414_120002_mid",
+        queued_at: "2026-04-14T12:00:02Z",
+        status: "running",
+        done_at: null,
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260415_120003_new",
+        queued_at: "2026-04-15T12:00:03Z",
+        status: "failed",
+        result: null,
+        error: { message: "latest failure" },
+      }),
+    );
+
+    const result = await handleRunsCommand(
+      makeContext(runsDir, "health 3d", 10, {
+        now: new Date("2026-04-15T23:30:00Z"),
+      }),
+    );
+
+    assert.match(result.text, /\*run health \(2026-04-13\.\.2026-04-15\)\*/);
+    assert.match(result.text, /done: 1/);
+    assert.match(result.text, /running: 1/);
+    assert.match(result.text, /failed: 1/);
+    assert.match(result.text, /run_20260415_120003_new/);
+  });
+});
+
+test("handleRunsCommand health supports explicit date ranges", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260410_120001_a",
+        queued_at: "2026-04-10T12:00:01Z",
+        status: "failed",
+        result: null,
+        error: { message: "older failure" },
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260412_120003_c",
+        queued_at: "2026-04-12T12:00:03Z",
+        status: "failed",
+        result: null,
+        error: { message: "newer failure" },
+      }),
+    );
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260413_120004_d",
+        queued_at: "2026-04-13T12:00:04Z",
+        status: "done",
+      }),
+    );
+
+    const result = await handleRunsCommand(
+      makeContext(runsDir, "health 2026-04-10..2026-04-12"),
+    );
+
+    assert.match(result.text, /\*run health \(2026-04-10\.\.2026-04-12\)\*/);
+    assert.match(result.text, /failed: 2/);
+    assert.match(result.text, /total: 2/);
+    assert.match(result.text, /run_20260412_120003_c/);
+    assert.doesNotMatch(result.text, /run_20260413_120004_d/);
+  });
+});
+
+test("handleRunsCommand health returns usage for invalid range input", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "health 2026-04-12..2026-04-10"));
+
+    assert.match(result.text, /health の期間指定が不正です/);
+    assert.match(result.text, /\/runs health 7d/);
   });
 });
