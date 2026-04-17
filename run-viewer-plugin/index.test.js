@@ -718,3 +718,21 @@ test("handleRunsCommand health returns usage for invalid range input", async () 
     assert.match(result.text, /\/runs health 7d/);
   });
 });
+
+test("handleRunsCommand health returns usage for invalid single calendar date", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "health 2026-02-31"));
+
+    assert.match(result.text, /health の期間指定が不正です/);
+    assert.match(result.text, /\/runs health 2026-04-15/);
+  });
+});
+
+test("handleRunsCommand health returns usage when explicit range contains invalid calendar date", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const result = await handleRunsCommand(makeContext(runsDir, "health 2026-02-28..2026-02-31"));
+
+    assert.match(result.text, /health の期間指定が不正です/);
+    assert.match(result.text, /\/runs health 2026-04-15..2026-04-17/);
+  });
+});

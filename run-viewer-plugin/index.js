@@ -252,6 +252,7 @@ function resolveHealthRange(spec, now = new Date(), cfg) {
   }
 
   if (ISO_DATE_RE.test(trimmed)) {
+    if (!isValidIsoDate(trimmed)) return null;
     return {
       startDate: trimmed,
       endDate: trimmed,
@@ -261,7 +262,12 @@ function resolveHealthRange(spec, now = new Date(), cfg) {
   }
 
   const rangeMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
-  if (rangeMatch && rangeMatch[1] <= rangeMatch[2]) {
+  if (
+    rangeMatch &&
+    isValidIsoDate(rangeMatch[1]) &&
+    isValidIsoDate(rangeMatch[2]) &&
+    rangeMatch[1] <= rangeMatch[2]
+  ) {
     return {
       startDate: rangeMatch[1],
       endDate: rangeMatch[2],
@@ -271,6 +277,21 @@ function resolveHealthRange(spec, now = new Date(), cfg) {
   }
 
   return null;
+}
+
+function isValidIsoDate(dateStr) {
+  if (!ISO_DATE_RE.test(dateStr)) return false;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    Number.isInteger(year) &&
+    Number.isInteger(month) &&
+    Number.isInteger(day) &&
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
 }
 
 /**
