@@ -25,6 +25,7 @@ import path from "node:path";
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
+const DEFAULT_HEALTH_TIME_ZONE = "UTC";
 // ── Path resolution ────────────────────────────────────────────────────────────
 
 /**
@@ -50,6 +51,49 @@ function resolveRunsDir(cfg) {
       : cfgDir;
   }
   return path.join(resolveStateDir(), "runs");
+}
+
+/**
+ * Resolve the timezone used to decide what "today" means for /runs health.
+ * Config `healthTimeZone` takes precedence, then env, then UTC.
+ */
+function resolveHealthTimeZone(cfg) {
+  const configuredTimeZone = typeof cfg?.healthTimeZone === "string"
+    ? cfg.healthTimeZone.trim()
+    : "";
+  const envTimeZone = process.env.RUN_VIEWER_HEALTH_TIME_ZONE?.trim() ?? "";
+  const candidates = [configuredTimeZone, envTimeZone, DEFAULT_HEALTH_TIME_ZONE];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      new Intl.DateTimeFormat("en-CA", { timeZone: candidate }).format(new Date());
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return DEFAULT_HEALTH_TIME_ZONE;
+}
+
+/**
+ * Convert a timestamp into YYYY-MM-DD using the configured /runs health timezone.
+ */
+function getHealthDate(now = new Date(), cfg) {
+  const timeZone = resolveHealthTimeZone(cfg);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const getPart = (type) => parts.find((part) => part.type === type)?.value ?? "00";
+
+  return {
+    date: `${getPart("year")}-${getPart("month")}-${getPart("day")}`,
+    timeZone,
+  };
 }
 
 // ── Run store reader ───────────────────────────────────────────────────────────
@@ -422,6 +466,7 @@ function summarizeRunsHealth(runs, today) {
 
   return {
     date: today,
+    timeZone: null,
     total: runs.length,
     counts,
     latestFailed,
@@ -440,6 +485,9 @@ function formatHealthSummary(summary) {
     : "✅";
 
   lines.push(`${overallEmoji} *run health (${summary.date})*`);
+  if (summary.timeZone) {
+    lines.push(`timezone: ${summary.timeZone}`);
+  }
   lines.push(
     `queued: ${summary.counts.queued} | running: ${summary.counts.running} | done: ${summary.counts.done} | failed: ${summary.counts.failed} | cancelled: ${summary.counts.cancelled}`,
   );
@@ -558,9 +606,12 @@ async function handleRunsRetry(ctx, runId) {
 async function handleRunsHealth(ctx) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = resolveRunsDir(cfg);
-  const today = new Date().toISOString().slice(0, 10);
+  const { date: today, timeZone } = getHealthDate(ctx.now ?? new Date(), cfg);
   const runs = await loadRunsForDate(runsDir, today);
-  const summary = summarizeRunsHealth(runs, today);
+  const summary = {
+    ...summarizeRunsHealth(runs, today),
+    timeZone,
+  };
   return { text: formatHealthSummary(summary) };
 }
 
@@ -626,6 +677,8 @@ export {
   handleRunsCommand,
   loadRunsForDate,
   listRuns,
+  getHealthDate,
+  resolveHealthTimeZone,
   resolveRunsDir,
   summarizeRunsHealth,
   writeRunRecord,

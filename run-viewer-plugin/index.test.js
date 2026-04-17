@@ -9,9 +9,11 @@ import plugin, {
   formatRunId,
   formatHealthSummary,
   formatRunDetail,
+  getHealthDate,
   handleRunsCommand,
   listRuns,
   loadRunsForDate,
+  resolveHealthTimeZone,
   summarizeRunsHealth,
   writeRunRecord,
 } from "./index.js";
@@ -92,9 +94,10 @@ function getRunsHandler() {
   return runs.handler;
 }
 
-function makeContext(runsDir, args = "", listLimit = 10) {
+function makeContext(runsDir, args = "", listLimit = 10, overrides = {}) {
   return {
     args,
+    ...overrides,
     config: {
       plugins: {
         entries: {
@@ -102,6 +105,7 @@ function makeContext(runsDir, args = "", listLimit = 10) {
             config: {
               runsDir,
               listLimit,
+              ...overrides.config?.plugins?.entries?.["run-viewer"]?.config,
             },
           },
         },
@@ -374,6 +378,43 @@ test("summarizeRunsHealth aggregates counts and latest failed run", () => {
   assert.equal(summary.latestFailed.run_id, "run_20260415_120003_ccc");
 });
 
+test("resolveHealthTimeZone defaults to UTC and falls back on invalid values", () => {
+  assert.equal(resolveHealthTimeZone({}), "UTC");
+  assert.equal(resolveHealthTimeZone({ healthTimeZone: "Asia/Tokyo" }), "Asia/Tokyo");
+  assert.equal(resolveHealthTimeZone({ healthTimeZone: "Invalid/Timezone" }), "UTC");
+});
+
+test("resolveHealthTimeZone falls back from invalid config to valid env", () => {
+  const original = process.env.RUN_VIEWER_HEALTH_TIME_ZONE;
+  process.env.RUN_VIEWER_HEALTH_TIME_ZONE = "Asia/Tokyo";
+
+  try {
+    assert.equal(
+      resolveHealthTimeZone({ healthTimeZone: "Invalid/Timezone" }),
+      "Asia/Tokyo",
+    );
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_HEALTH_TIME_ZONE;
+    } else {
+      process.env.RUN_VIEWER_HEALTH_TIME_ZONE = original;
+    }
+  }
+});
+
+test("getHealthDate uses configured timezone to decide today's date", () => {
+  const now = new Date("2026-04-15T23:30:00Z");
+
+  assert.deepEqual(getHealthDate(now, {}), {
+    date: "2026-04-15",
+    timeZone: "UTC",
+  });
+  assert.deepEqual(getHealthDate(now, { healthTimeZone: "Asia/Tokyo" }), {
+    date: "2026-04-16",
+    timeZone: "Asia/Tokyo",
+  });
+});
+
 test("handleRunsCommand health does not undercount when a day has more than 200 runs", async () => {
   await withTempRunsDir(async (runsDir) => {
     const today = new Date().toISOString().slice(0, 10);
@@ -432,7 +473,8 @@ test("summarizeRunsHealth selects latest failed by timestamp instead of input or
 });
 
 test("formatHealthSummary renders counts and latest failed run", () => {
-  const summary = summarizeRunsHealth([
+  const summary = {
+    ...summarizeRunsHealth([
     makeRecord({
       run_id: "run_20260415_120003_ccc",
       queued_at: "2026-04-15T12:00:03Z",
@@ -446,10 +488,13 @@ test("formatHealthSummary renders counts and latest failed run", () => {
       queued_at: "2026-04-15T12:00:01Z",
       status: "done",
     }),
-  ], "2026-04-15");
+  ], "2026-04-15"),
+    timeZone: "Asia/Tokyo",
+  };
 
   const text = formatHealthSummary(summary);
   assert.match(text, /\*run health \(2026-04-15\)\*/);
+  assert.match(text, /timezone: Asia\/Tokyo/);
   assert.match(text, /queued: 0 \| running: 0 \| done: 1 \| failed: 1 \| cancelled: 0/);
   assert.match(text, /\*最新 failed:\* `run_20260415_120003_ccc` \(digest\)/);
   assert.match(text, /エラー: Sense worker 接続タイムアウト/);
@@ -481,7 +526,43 @@ test("handleRunsCommand returns today's health summary", async () => {
     const result = await handleRunsCommand(makeContext(runsDir, "health"));
 
     assert.match(result.text, /\*run health \(/);
+    assert.match(result.text, /timezone: UTC/);
     assert.match(result.text, /failed: 1/);
     assert.match(result.text, /run_.*120003_ccc/);
+  });
+});
+
+test("handleRunsCommand health uses configured timezone at date boundaries", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeRun(
+      runsDir,
+      makeRecord({
+        run_id: "run_20260416_080000_tokyo",
+        queued_at: "2026-04-16T08:00:00Z",
+        status: "done",
+      }),
+    );
+
+    const result = await handleRunsCommand(
+      makeContext(runsDir, "health", 10, {
+        now: new Date("2026-04-15T23:30:00Z"),
+        config: {
+          plugins: {
+            entries: {
+              "run-viewer": {
+                config: {
+                  healthTimeZone: "Asia/Tokyo",
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    assert.match(result.text, /\*run health \(2026-04-16\)\*/);
+    assert.match(result.text, /timezone: Asia\/Tokyo/);
+    assert.match(result.text, /done: 1/);
+    assert.match(result.text, /total: 1/);
   });
 });
