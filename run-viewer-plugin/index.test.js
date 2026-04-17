@@ -374,6 +374,63 @@ test("summarizeRunsHealth aggregates counts and latest failed run", () => {
   assert.equal(summary.latestFailed.run_id, "run_20260415_120003_ccc");
 });
 
+test("handleRunsCommand health does not undercount when a day has more than 200 runs", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const datePrefix = today.replaceAll("-", "");
+
+    for (let i = 0; i < 205; i += 1) {
+      const minutes = String(Math.floor(i / 60)).padStart(2, "0");
+      const seconds = String(i % 60).padStart(2, "0");
+      await writeRun(
+        runsDir,
+        makeRecord({
+          run_id: `run_${datePrefix}_12${minutes}${seconds}_${String(i).padStart(3, "0")}`,
+          queued_at: `${today}T12:${minutes}:${seconds}Z`,
+          status: i < 3 ? "failed" : "done",
+          result: i < 3 ? null : undefined,
+          error: i < 3 ? { message: `failed-${i}` } : null,
+        }),
+      );
+    }
+
+    const result = await handleRunsCommand(makeContext(runsDir, "health"));
+
+    assert.match(result.text, /done: 202/);
+    assert.match(result.text, /failed: 3/);
+    assert.match(result.text, /total: 205/);
+  });
+});
+
+test("summarizeRunsHealth selects latest failed by timestamp instead of input order", () => {
+  const runs = [
+    makeRecord({
+      run_id: "run_20260415_120003_ccc",
+      queued_at: "2026-04-15T12:00:03Z",
+      status: "done",
+    }),
+    makeRecord({
+      run_id: "run_20260415_120001_aaa",
+      queued_at: "2026-04-15T12:00:01Z",
+      status: "failed",
+      result: null,
+      error: { message: "older failed" },
+    }),
+    makeRecord({
+      run_id: "run_20260415_120002_bbb",
+      queued_at: "2026-04-15T12:00:02Z",
+      status: "failed",
+      result: null,
+      error: { message: "newer failed" },
+    }),
+  ];
+
+  const summary = summarizeRunsHealth(runs, "2026-04-15");
+
+  assert.equal(summary.counts.failed, 2);
+  assert.equal(summary.latestFailed.run_id, "run_20260415_120002_bbb");
+});
+
 test("formatHealthSummary renders counts and latest failed run", () => {
   const summary = summarizeRunsHealth([
     makeRecord({

@@ -25,8 +25,6 @@ import path from "node:path";
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
-const HEALTH_SCAN_LIMIT = 200;
-
 // ── Path resolution ────────────────────────────────────────────────────────────
 
 /**
@@ -108,7 +106,7 @@ async function writeRunRecord(runsDir, record) {
 /**
  * Load runs for a specific YYYY-MM-DD date directory, newest first.
  */
-async function loadRunsForDate(runsDir, dateStr, limit = HEALTH_SCAN_LIMIT) {
+async function loadRunsForDate(runsDir, dateStr, limit) {
   const dirPath = path.join(runsDir, dateStr);
   let files;
   try {
@@ -124,7 +122,7 @@ async function loadRunsForDate(runsDir, dateStr, limit = HEALTH_SCAN_LIMIT) {
     .reverse();
 
   for (const file of jsonFiles) {
-    if (records.length >= limit) break;
+    if (Number.isFinite(limit) && records.length >= limit) break;
     const record = await readRunFile(path.join(dirPath, file));
     if (record) records.push(record);
   }
@@ -375,6 +373,13 @@ function formatRetryAccepted(originalRunId, retryRunId) {
   ].join("\n");
 }
 
+function getRunTimestampMs(run) {
+  const timestamp = run.queued_at ?? run.started_at ?? run.done_at ?? null;
+  if (!timestamp) return Number.NEGATIVE_INFINITY;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
 /**
  * Build a minimal health summary from today's run store.
  */
@@ -393,8 +398,20 @@ function summarizeRunsHealth(runs, today) {
     if (status in counts) {
       counts[status] += 1;
     }
-    if (status === "failed" && latestFailed == null) {
-      latestFailed = run;
+    if (status === "failed") {
+      if (latestFailed == null) {
+        latestFailed = run;
+        continue;
+      }
+
+      const currentTs = getRunTimestampMs(run);
+      const latestTs = getRunTimestampMs(latestFailed);
+      if (
+        currentTs > latestTs ||
+        (currentTs === latestTs && String(run.run_id ?? "") > String(latestFailed.run_id ?? ""))
+      ) {
+        latestFailed = run;
+      }
     }
   }
 
@@ -542,7 +559,7 @@ async function handleRunsHealth(ctx) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = resolveRunsDir(cfg);
   const today = new Date().toISOString().slice(0, 10);
-  const runs = await loadRunsForDate(runsDir, today, HEALTH_SCAN_LIMIT);
+  const runs = await loadRunsForDate(runsDir, today);
   const summary = summarizeRunsHealth(runs, today);
   return { text: formatHealthSummary(summary) };
 }
