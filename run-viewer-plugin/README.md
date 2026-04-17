@@ -54,10 +54,15 @@ Single or compound filters on the run list.
 | `/runs kind=<value>` | any `kind` value |
 | `/runs <status> kind=<value>` | `status` AND `kind` (e.g. `failed kind=digest`) |
 | `/runs last=<n>` | newest n records (overrides `listLimit`) |
+| `/runs last=<n> <status>` | filter by `status`, then return the first `n` matches |
+| `/runs last=<n> kind=<value>` | filter by `kind`, then return the first `n` matches |
+| `/runs last=<n> <status> kind=<value>` | filter by `status` AND `kind`, then return the first `n` matches |
 
-Compound filters accept status and kind in any order (`failed kind=digest` = `kind=digest failed`). Duplicate conditions and `last=` combined with other filters return a usage hint instead.
+Status, kind, and `last=<n>` can be combined in any order. For example, `/runs last=5 failed` and `/runs failed last=5` are equivalent, and `/runs last=5 failed kind=digest` returns the first 5 runs that match both filters.
 
-**Scope:** status and kind filters scan the 50 most recent records. Records outside that window are not searched.
+Duplicate status, kind, or `last=` conditions still return a usage hint.
+
+**Scope:** all `/runs` filters scan at most the 50 most recent records. `last=<n>` limits the displayed results after filtering; it does not expand the scan window beyond 50.
 
 **Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
 
