@@ -62,14 +62,19 @@ function resolveHealthTimeZone(cfg) {
     ? cfg.healthTimeZone.trim()
     : "";
   const envTimeZone = process.env.RUN_VIEWER_HEALTH_TIME_ZONE?.trim() ?? "";
-  const candidate = configuredTimeZone || envTimeZone || DEFAULT_HEALTH_TIME_ZONE;
+  const candidates = [configuredTimeZone, envTimeZone, DEFAULT_HEALTH_TIME_ZONE];
 
-  try {
-    new Intl.DateTimeFormat("en-CA", { timeZone: candidate }).format(new Date());
-    return candidate;
-  } catch {
-    return DEFAULT_HEALTH_TIME_ZONE;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      new Intl.DateTimeFormat("en-CA", { timeZone: candidate }).format(new Date());
+      return candidate;
+    } catch {
+      continue;
+    }
   }
+
+  return DEFAULT_HEALTH_TIME_ZONE;
 }
 
 /**

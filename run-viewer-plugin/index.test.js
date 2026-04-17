@@ -384,6 +384,24 @@ test("resolveHealthTimeZone defaults to UTC and falls back on invalid values", (
   assert.equal(resolveHealthTimeZone({ healthTimeZone: "Invalid/Timezone" }), "UTC");
 });
 
+test("resolveHealthTimeZone falls back from invalid config to valid env", () => {
+  const original = process.env.RUN_VIEWER_HEALTH_TIME_ZONE;
+  process.env.RUN_VIEWER_HEALTH_TIME_ZONE = "Asia/Tokyo";
+
+  try {
+    assert.equal(
+      resolveHealthTimeZone({ healthTimeZone: "Invalid/Timezone" }),
+      "Asia/Tokyo",
+    );
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_HEALTH_TIME_ZONE;
+    } else {
+      process.env.RUN_VIEWER_HEALTH_TIME_ZONE = original;
+    }
+  }
+});
+
 test("getHealthDate uses configured timezone to decide today's date", () => {
   const now = new Date("2026-04-15T23:30:00Z");
 
