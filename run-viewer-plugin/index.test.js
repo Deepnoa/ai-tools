@@ -2098,6 +2098,70 @@ test("scanLimit auto-expansion: offset+last exceeding scanLimit still finds the 
   });
 });
 
+// ── listLimit cap consistency (filter / search path) ─────────────────────────
+
+test("filter path caps configLimit at MAX_LIST_LIMIT=50 even if listLimit is larger", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    // Write 60 runs
+    for (let i = 1; i <= 60; i++) {
+      const sec = String(i).padStart(2, "0");
+      await writeRun(runsDir, makeRecord({
+        run_id: `run_20260415_0800${sec}_${String(i).padStart(3, "0")}`,
+        queued_at: `2026-04-15T08:00:${sec}Z`,
+        status: "done",
+      }));
+    }
+
+    // listLimit=60 but MAX_LIST_LIMIT=50 should apply even on filter path
+    const result = await handleRunsCommand(makeContext(runsDir, "done", 60));
+    const runLines = result.text.split("\n").filter((line) => line.includes("`run_"));
+    assert.equal(runLines.length, 50);
+  });
+});
+
+test("search path caps configLimit at MAX_LIST_LIMIT=50 even if listLimit is larger", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    // Write 60 runs
+    for (let i = 1; i <= 60; i++) {
+      const sec = String(i).padStart(2, "0");
+      await writeRun(runsDir, makeRecord({
+        run_id: `run_20260415_0900${sec}_${String(i).padStart(3, "0")}`,
+        queued_at: `2026-04-15T09:00:${sec}Z`,
+        normalized_task: "cap_test_task",
+      }));
+    }
+
+    // listLimit=60 but MAX_LIST_LIMIT=50 should apply on search path too
+    const result = await handleRunsCommand(makeContext(runsDir, "search cap_test_task", 60));
+    const runLines = result.text.split("\n").filter((line) => line.includes("`run_"));
+    assert.equal(runLines.length, 50);
+  });
+});
+
+test("last=<n> overrides configLimit cap and can return more than 50", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    // Write 60 runs
+    for (let i = 1; i <= 60; i++) {
+      const sec = String(i).padStart(2, "0");
+      await writeRun(runsDir, makeRecord({
+        run_id: `run_20260415_1000${sec}_${String(i).padStart(3, "0")}`,
+        queued_at: `2026-04-15T10:00:${sec}Z`,
+        status: "done",
+        normalized_task: "last_override_task",
+      }));
+    }
+
+    // last=60 explicitly overrides the 50-cap
+    const result = await handleRunsCommand(
+      makeContext(runsDir, "search last_override_task last=60", 10, {
+        config: { plugins: { entries: { "run-viewer": { config: { scanLimit: 100 } } } } },
+      }),
+    );
+    const runLines = result.text.split("\n").filter((line) => line.includes("`run_"));
+    assert.equal(runLines.length, 60);
+  });
+});
+
 // ── Regression: no-offset queries unchanged ───────────────────────────────────
 
 test("offset=0 produces same output as no offset specified", async () => {

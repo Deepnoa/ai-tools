@@ -141,6 +141,17 @@ Set under `plugins.entries.run-viewer.config`:
 
 Plain `/runs` (no arguments) reads only `listLimit` records and is not affected by `scanLimit` or `offset=<n>`.
 
+### Display limit rules
+
+| Situation | Display limit |
+|-----------|--------------|
+| `/runs` (no args) | `listLimit` (hard cap: 50) |
+| `/runs <filter>` — no `last=` | `listLimit` (hard cap: 50) |
+| `/runs search <text>` — no `last=` | `listLimit` (hard cap: 50) |
+| Any command with `last=<n>` | `n` (ceiling: scan window, hard cap: 1000) |
+
+`last=<n>` is the explicit override: it bypasses the 50-record cap and lets you request up to the scan window size (hard cap: 1000). Without `last=`, all commands — plain list, filter, and search — honour the same `listLimit` cap (≤ 50).
+
 ## Environment Variables
 
 `RUN_VIEWER_HEALTH_TIME_ZONE` — fallback timezone for `/runs health` when `healthTimeZone` is not configured or is invalid.
