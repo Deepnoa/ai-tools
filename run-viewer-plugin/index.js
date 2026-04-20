@@ -302,14 +302,19 @@ function isValidIsoDate(dateStr) {
  * Config `scanLimit` takes precedence, then env, then default.
  */
 function resolveScanLimit(cfg) {
-  const cfgLimit = typeof cfg?.scanLimit === "number" ? cfg.scanLimit : null;
-  if (cfgLimit !== null && cfgLimit > 0) {
-    return Math.min(cfgLimit, MAX_SCAN_LIMIT);
+  const fromConfig = typeof cfg?.scanLimit === "number" && cfg.scanLimit > 0
+    ? Math.trunc(cfg.scanLimit)
+    : 0;
+  if (fromConfig > 0) return Math.min(fromConfig, MAX_SCAN_LIMIT);
+
+  const envRaw = process.env.RUN_VIEWER_SCAN_LIMIT?.trim() ?? "";
+  if (envRaw) {
+    const fromEnv = parseInt(envRaw, 10);
+    if (Number.isInteger(fromEnv) && fromEnv > 0) {
+      return Math.min(fromEnv, MAX_SCAN_LIMIT);
+    }
   }
-  const envLimit = parseInt(process.env.RUN_VIEWER_SCAN_LIMIT ?? "", 10);
-  if (Number.isInteger(envLimit) && envLimit > 0) {
-    return Math.min(envLimit, MAX_SCAN_LIMIT);
-  }
+
   return DEFAULT_SCAN_LIMIT;
 }
 
