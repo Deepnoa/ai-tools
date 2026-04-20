@@ -711,10 +711,11 @@ function formatHealthSummary(summary) {
 
 /**
  * Parse a compound list filter from /runs args.
- * Accepts up to three token types in any order:
+ * Accepts up to four token types in any order:
  *   - one status keyword (failed / done / running / queued / cancelled)
  *   - one kind=<value> token
  *   - one last=<n> token (count cap; may be combined with status/kind)
+ *   - one offset=<n> token (0-based skip; may be combined with any of the above)
  *
  * Returns:
  *   { type: "compound", status: string|null, kind: string|null, last: number|null, offset: number|null }
