@@ -2074,13 +2074,7 @@ test("scanLimit auto-expansion: offset+last exceeding scanLimit still finds the 
 
     // scanLimit=20, offset=15, last=10 → required=25 > 20
     // Auto-expand: effectiveScanLimit = min(max(20, 25), 1000) = 25
-    // run #1 is at position 24 (0-indexed) in newest-first list
-    // With search filter on "unique_offset_task" + offset=15 last=10:
-    // Only 1 run matches; that run is at position 0 in filtered list, which is < slice(15,25)
-    // Actually let's use all 25 with ordinary + search unique_offset_task:
-    // The unique run is position 0 in unfiltered but we need it at offset 15 of filtered...
-    // Let's try a simpler approach: use offset=15 on all 25 runs (no search), with scanLimit=20
-    // Without expansion: only first 20 read → run #1 (at pos 24) missed
+    // Without expansion: only first 20 reads → run #1 (at pos 24) missed
     // With expansion: all 25 read → run #1 at pos 24 → slice(15,25) includes pos 15..24 → includes run #1
     const ctx = makeContext(runsDir, "offset=15 last=10", 10, {
       config: {

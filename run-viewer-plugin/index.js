@@ -717,7 +717,7 @@ function formatHealthSummary(summary) {
  *   - one last=<n> token (count cap; may be combined with status/kind)
  *
  * Returns:
- *   { type: "compound", status: string|null, kind: string|null, last: number|null }
+ *   { type: "compound", status: string|null, kind: string|null, last: number|null, offset: number|null }
  *   null — unrecognized, duplicate token, or invalid last value
  *
  * Examples:
@@ -779,15 +779,15 @@ function parseListFilter(args) {
  * Multiple query keywords are collected (AND search).
  *
  * Examples:
- *   "search health"                              → { query: ["health"],          status: null,     kind: null,      last: null }
- *   "search health check"                        → { query: ["health","check"],  status: null,     kind: null,      last: null }
- *   "search api error failed"                    → { query: ["api","error"],     status: "failed", kind: null,      last: null }
- *   "search health failed"                       → { query: ["health"],          status: "failed", kind: null,      last: null }
- *   "search health kind=digest"                  → { query: ["health"],          status: null,     kind: "digest",  last: null }
- *   "search health check failed kind=digest last=5" → { query: ["health","check"], status: "failed", kind: "digest", last: 5 }
- *   "failed search health check last=5"          → { query: ["health","check"],  status: "failed", kind: null,      last: 5 }
- *   "search failed"                              → { query: ["failed"],          status: null,     kind: null,      last: null }
- *   "search failed done"                         → { query: ["failed"],          status: "done",   kind: null,      last: null }
+ *   "search health"                              → { query: ["health"],          status: null,     kind: null,      last: null,  offset: null }
+ *   "search health check"                        → { query: ["health","check"],  status: null,     kind: null,      last: null,  offset: null }
+ *   "search api error failed"                    → { query: ["api","error"],     status: "failed", kind: null,      last: null,  offset: null }
+ *   "search health failed"                       → { query: ["health"],          status: "failed", kind: null,      last: null,  offset: null }
+ *   "search health kind=digest"                  → { query: ["health"],          status: null,     kind: "digest",  last: null,  offset: null }
+ *   "search health check failed kind=digest last=5" → { query: ["health","check"], status: "failed", kind: "digest", last: 5,   offset: null }
+ *   "failed search health check last=5"          → { query: ["health","check"],  status: "failed", kind: null,      last: 5,    offset: null }
+ *   "search failed"                              → { query: ["failed"],          status: null,     kind: null,      last: null,  offset: null }
+ *   "search failed done"                         → { query: ["failed"],          status: "done",   kind: null,      last: null,  offset: null }
  *   "search health search digest"                → null (duplicate search)
  */
 function parseSearchFilter(args) {
@@ -1138,7 +1138,7 @@ async function handleRunsCommand(ctx) {
       "• `/runs retry <run_id>` — `failed` / `cancelled` の run を再実行",
       "• `/runs health [7d|YYYY-MM-DD|YYYY-MM-DD..YYYY-MM-DD]` — run health summary",
       "• `/runs search <text...>` — normalized_task / raw_text を部分一致検索（複数キーワード指定で AND 検索）",
-      "• `/runs search <text...> [<status>] [kind=<value>] [last=<n>]` — 検索後に status/kind/last を適用",
+      "• `/runs search <text...> [<status>] [kind=<value>] [last=<n>] [offset=<n>]` — 検索後に status/kind/last/offset を適用",
       "• `/runs <status>` — status でフィルタ (failed / done / running / queued / cancelled)",
       "• `/runs kind=<value>` — kind でフィルタ",
       "• `/runs <status> kind=<value>` — 複合フィルタ (例: failed kind=digest)",
