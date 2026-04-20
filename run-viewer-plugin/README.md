@@ -12,11 +12,13 @@ OpenClaw plugin that exposes run record visibility through the `/runs` command.
 - `/runs health YYYY-MM-DD` — health summary for a specific date
 - `/runs health YYYY-MM-DD..YYYY-MM-DD` — health summary for an inclusive date range
 - `/runs search <text...>` — search recent runs by text (multiple keywords are AND-matched)
-- `/runs search <text...> [<status>] [kind=<value>] [last=<n>]` — search with optional filters
+- `/runs search <text...> [<status>] [kind=<value>] [last=<n>] [offset=<n>]` — search with optional filters
 - `/runs <status>` — filter list by status (failed / done / running / queued / cancelled)
 - `/runs kind=<value>` — filter list by kind (e.g. `kind=health`, `kind=digest`)
 - `/runs <status> kind=<value>` — compound filter: status AND kind (e.g. `failed kind=digest`)
 - `/runs last=<n>` — limit list to n most recent records
+- `/runs offset=<n>` — skip the first n results (0-based paging)
+- `/runs offset=<n> last=<m>` — skip n results, then show m
 
 Unknown or malformed arguments return a usage hint.
 
@@ -59,23 +61,27 @@ Single or compound filters on the run list, plus a text search command that acce
 | `/runs last=<n> <status>` | filter by `status`, then return the first `n` matches |
 | `/runs last=<n> kind=<value>` | filter by `kind`, then return the first `n` matches |
 | `/runs last=<n> <status> kind=<value>` | filter by `status` AND `kind`, then return the first `n` matches |
+| `/runs offset=<n>` | skip the first n filtered results (0-based) |
+| `/runs offset=<n> last=<m>` | skip n results, then return m |
+| `/runs <status> offset=<n>` | filter by `status`, skip first n matches |
 | `/runs search <text...>` | case-insensitive partial match on `normalized_task` and `raw_text`; multiple keywords are AND-matched |
-| `/runs search <text...> [<status>] [kind=<value>] [last=<n>]` | search, then apply status/kind/last |
+| `/runs search <text...> [<status>] [kind=<value>] [last=<n>] [offset=<n>]` | search, then apply status/kind/last/offset |
 
-Status, kind, and `last=<n>` can be combined in any order. For example, `/runs last=5 failed` and `/runs failed last=5` are equivalent, and `/runs last=5 failed kind=digest` returns the first 5 runs that match both filters.
+Status, kind, `last=<n>`, and `offset=<n>` can be combined in any order. For example, `/runs last=5 failed` and `/runs failed last=5` are equivalent, and `/runs offset=10 last=5 failed` skips the first 10 failed runs and returns the next 5.
 
-Duplicate status, kind, or `last=` conditions still return a usage hint.
+Duplicate status, kind, `last=`, or `offset=` conditions still return a usage hint.
 
 ### `/runs search` — text search with optional filters
 
-`/runs search <text...>` searches `normalized_task` and `raw_text` with case-insensitive partial matching. Provide multiple space-separated keywords to AND-match: every keyword must appear somewhere in the run's task text or raw text for the run to be included. All filter modifiers (`<status>`, `kind=<value>`, `last=<n>`) are optional and can be combined in any order.
+`/runs search <text...>` searches `normalized_task` and `raw_text` with case-insensitive partial matching. Provide multiple space-separated keywords to AND-match: every keyword must appear somewhere in the run's task text or raw text for the run to be included. All filter modifiers (`<status>`, `kind=<value>`, `last=<n>`, `offset=<n>`) are optional and can be combined in any order.
 
 **Evaluation order:**
 
 1. Scan the `scanLimit` most recent records (default: 100)
 2. Apply text search — all keywords must match (`normalized_task` / `raw_text`, case-insensitive AND)
 3. Apply `status` and `kind` filters (AND)
-4. Apply `last=<n>` to cap the final result count
+4. Apply `offset=<n>` to skip the first n results (default: 0)
+5. Apply `last=<n>` to cap the final result count
 
 **Examples:**
 
@@ -89,8 +95,10 @@ Duplicate status, kind, or `last=` conditions still return a usage hint.
 | `/runs search health last=5` | up to 5 most recent matching runs |
 | `/runs search health failed kind=digest last=3` | up to 3 most recent runs matching all three conditions |
 | `/runs failed search health` | same as above — modifiers are order-independent |
+| `/runs search health offset=10` | matching runs starting from the 11th result |
+| `/runs search health offset=10 last=5` | matching runs 11–15 |
 
-**Scope:** all `/runs` filters and `/runs search <text...>` scan at most `scanLimit` recent records (default: 100, configurable up to 1000). `last=<n>` and `listLimit` control the number of displayed results after filtering; they do not affect the scan window.
+**Scope:** all `/runs` filters and `/runs search <text...>` scan at most `scanLimit` recent records (default: 100, configurable up to 1000). `offset=<n>` controls the starting position within filtered results; `last=<n>` and `listLimit` control the number of displayed results. Neither `offset=<n>` nor `last=<n>` expands the scan window — only `scanLimit` does.
 
 **Note:** `/runs kind=health` and `/runs health` are distinct. `/runs health` shows a health summary dashboard; `/runs kind=health` filters the run list to records where `kind = health`.
 
@@ -125,12 +133,13 @@ Set under `plugins.entries.run-viewer.config`:
 
 ### Scan window vs. display limit
 
-`scanLimit` and `listLimit` / `last=<n>` serve different purposes:
+`scanLimit`, `offset=<n>`, and `listLimit` / `last=<n>` each serve a distinct purpose:
 
-- **`scanLimit`** — how many records are read from disk when running a filter or search. A larger value lets you find older matching records at the cost of more disk reads. Applies to all filter/search commands (`/runs failed`, `/runs kind=<value>`, `/runs search <text...>`, and combinations).
-- **`listLimit` / `last=<n>`** — how many results are shown after filtering. These do not expand the scan window.
+- **`scanLimit`** — how many records are read from disk when running a filter or search. A larger value lets you find older matching records at the cost of more disk reads. Applies to all filter/search commands (`/runs failed`, `/runs kind=<value>`, `/runs search <text...>`, and combinations). Automatically expanded when `offset + last` would exceed it (up to the hard cap of 1000).
+- **`offset=<n>`** — starting position within the filtered results (0-based). Skips the first n matches. Does not expand the scan window on its own; the auto-expansion above handles it.
+- **`listLimit` / `last=<n>`** — how many results are shown after filtering and offsetting. These do not expand the scan window.
 
-Plain `/runs` (no arguments) reads only `listLimit` records and is not affected by `scanLimit`.
+Plain `/runs` (no arguments) reads only `listLimit` records and is not affected by `scanLimit` or `offset=<n>`.
 
 ## Environment Variables
 
