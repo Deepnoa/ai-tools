@@ -2102,9 +2102,9 @@ test("scanLimit auto-expansion: offset+last exceeding scanLimit still finds the 
 
 test("filter path caps configLimit at MAX_LIST_LIMIT=50 even if listLimit is larger", async () => {
   await withTempRunsDir(async (runsDir) => {
-    // Write 60 runs
+    // Write 60 runs (seconds 00-59, valid ISO 8601)
     for (let i = 1; i <= 60; i++) {
-      const sec = String(i).padStart(2, "0");
+      const sec = String(i - 1).padStart(2, "0");
       await writeRun(runsDir, makeRecord({
         run_id: `run_20260415_0800${sec}_${String(i).padStart(3, "0")}`,
         queued_at: `2026-04-15T08:00:${sec}Z`,
@@ -2121,9 +2121,9 @@ test("filter path caps configLimit at MAX_LIST_LIMIT=50 even if listLimit is lar
 
 test("search path caps configLimit at MAX_LIST_LIMIT=50 even if listLimit is larger", async () => {
   await withTempRunsDir(async (runsDir) => {
-    // Write 60 runs
+    // Write 60 runs (seconds 00-59, valid ISO 8601)
     for (let i = 1; i <= 60; i++) {
-      const sec = String(i).padStart(2, "0");
+      const sec = String(i - 1).padStart(2, "0");
       await writeRun(runsDir, makeRecord({
         run_id: `run_20260415_0900${sec}_${String(i).padStart(3, "0")}`,
         queued_at: `2026-04-15T09:00:${sec}Z`,
@@ -2140,9 +2140,9 @@ test("search path caps configLimit at MAX_LIST_LIMIT=50 even if listLimit is lar
 
 test("last=<n> overrides configLimit cap and can return more than 50", async () => {
   await withTempRunsDir(async (runsDir) => {
-    // Write 60 runs
+    // Write 60 runs (seconds 00-59, valid ISO 8601)
     for (let i = 1; i <= 60; i++) {
-      const sec = String(i).padStart(2, "0");
+      const sec = String(i - 1).padStart(2, "0");
       await writeRun(runsDir, makeRecord({
         run_id: `run_20260415_1000${sec}_${String(i).padStart(3, "0")}`,
         queued_at: `2026-04-15T10:00:${sec}Z`,

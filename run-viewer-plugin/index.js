@@ -722,12 +722,14 @@ function formatHealthSummary(summary) {
  *   null — unrecognized, duplicate token, or invalid last value
  *
  * Examples:
- *   "failed"                   → { ..., status: "failed", kind: null,      last: null }
- *   "kind=health"              → { ..., status: null,     kind: "health",   last: null }
- *   "last=10"                  → { ..., status: null,     kind: null,       last: 10   }
- *   "failed kind=digest"       → { ..., status: "failed", kind: "digest",   last: null }
- *   "last=5 failed"            → { ..., status: "failed", kind: null,       last: 5    }
- *   "last=5 failed kind=digest"→ { ..., status: "failed", kind: "digest",   last: 5    }
+ *   "failed"                   → { ..., status: "failed", kind: null,      last: null, offset: null }
+ *   "kind=health"              → { ..., status: null,     kind: "health",   last: null, offset: null }
+ *   "last=10"                  → { ..., status: null,     kind: null,       last: 10,   offset: null }
+ *   "offset=5"                 → { ..., status: null,     kind: null,       last: null, offset: 5    }
+ *   "failed kind=digest"       → { ..., status: "failed", kind: "digest",   last: null, offset: null }
+ *   "last=5 failed"            → { ..., status: "failed", kind: null,       last: 5,    offset: null }
+ *   "last=5 failed kind=digest"→ { ..., status: "failed", kind: "digest",   last: 5,    offset: null }
+ *   "failed offset=5"          → { ..., status: "failed", kind: null,       last: null, offset: 5    }
  *   "failed done"              → null  (duplicate status)
  *   "kind=a kind=b"            → null  (duplicate kind)
  *   "last=5 last=10"           → null  (duplicate last)
@@ -785,8 +787,10 @@ function parseListFilter(args) {
  *   "search api error failed"                    → { query: ["api","error"],     status: "failed", kind: null,      last: null,  offset: null }
  *   "search health failed"                       → { query: ["health"],          status: "failed", kind: null,      last: null,  offset: null }
  *   "search health kind=digest"                  → { query: ["health"],          status: null,     kind: "digest",  last: null,  offset: null }
+ *   "search health offset=5"                     → { query: ["health"],          status: null,     kind: null,      last: null,  offset: 5    }
  *   "search health check failed kind=digest last=5" → { query: ["health","check"], status: "failed", kind: "digest", last: 5,   offset: null }
  *   "failed search health check last=5"          → { query: ["health","check"],  status: "failed", kind: null,      last: 5,    offset: null }
+ *   "search health offset=10 last=5"             → { query: ["health"],          status: null,     kind: null,      last: 5,    offset: 10   }
  *   "search failed"                              → { query: ["failed"],          status: null,     kind: null,      last: null,  offset: null }
  *   "search failed done"                         → { query: ["failed"],          status: "done",   kind: null,      last: null,  offset: null }
  *   "search health search digest"                → null (duplicate search)
@@ -882,10 +886,12 @@ function parseSearchFilter(args) {
 async function handleRunsFiltered(ctx, filter) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = resolveRunsDir(cfg);
-  const configLimit =
+  const configLimit = Math.min(
     typeof cfg.listLimit === "number" && cfg.listLimit > 0
       ? cfg.listLimit
-      : DEFAULT_LIST_LIMIT;
+      : DEFAULT_LIST_LIMIT,
+    MAX_LIST_LIMIT,
+  );
 
   return handleRunsListQuery(ctx, {
     ...filter,
