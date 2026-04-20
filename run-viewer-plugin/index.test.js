@@ -20,6 +20,7 @@ import plugin, {
   parseSearchFilter,
   resolveHealthRange,
   resolveHealthTimeZone,
+  resolveScanLimit,
   summarizeRunsHealth,
   writeRunRecord,
 } from "./index.js";
@@ -421,6 +422,136 @@ test("resolveHealthTimeZone falls back from invalid config to valid env", () => 
       delete process.env.RUN_VIEWER_HEALTH_TIME_ZONE;
     } else {
       process.env.RUN_VIEWER_HEALTH_TIME_ZONE = original;
+    }
+  }
+});
+
+// ── resolveScanLimit ──────────────────────────────────────────────────────────
+
+test("resolveScanLimit returns DEFAULT_SCAN_LIMIT (100) when nothing is configured", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({}), 100);
+    assert.equal(resolveScanLimit(null), 100);
+    assert.equal(resolveScanLimit(undefined), 100);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit uses config.scanLimit when set", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 200 }), 200);
+    assert.equal(resolveScanLimit({ scanLimit: 1 }), 1);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit caps config.scanLimit at MAX_SCAN_LIMIT (1000)", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 2000 }), 1000);
+    assert.equal(resolveScanLimit({ scanLimit: 999999 }), 1000);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit truncates float config.scanLimit", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  delete process.env.RUN_VIEWER_SCAN_LIMIT;
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 50.9 }), 50);
+    assert.equal(resolveScanLimit({ scanLimit: 1.1 }), 1);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit falls back to RUN_VIEWER_SCAN_LIMIT env when config absent", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "150";
+
+  try {
+    assert.equal(resolveScanLimit({}), 150);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit caps RUN_VIEWER_SCAN_LIMIT env at MAX_SCAN_LIMIT (1000)", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "5000";
+
+  try {
+    assert.equal(resolveScanLimit({}), 1000);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit config wins over env", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "150";
+
+  try {
+    assert.equal(resolveScanLimit({ scanLimit: 300 }), 300);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
+    }
+  }
+});
+
+test("resolveScanLimit falls back to default when env is invalid or config is non-positive", () => {
+  const original = process.env.RUN_VIEWER_SCAN_LIMIT;
+  process.env.RUN_VIEWER_SCAN_LIMIT = "not-a-number";
+
+  try {
+    assert.equal(resolveScanLimit({}), 100);
+    assert.equal(resolveScanLimit({ scanLimit: 0 }), 100);
+    assert.equal(resolveScanLimit({ scanLimit: -1 }), 100);
+    assert.equal(resolveScanLimit({ scanLimit: "50" }), 100);
+  } finally {
+    if (original == null) {
+      delete process.env.RUN_VIEWER_SCAN_LIMIT;
+    } else {
+      process.env.RUN_VIEWER_SCAN_LIMIT = original;
     }
   }
 });
