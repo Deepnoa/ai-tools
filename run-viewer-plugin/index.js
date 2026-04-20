@@ -24,6 +24,8 @@ import path from "node:path";
 
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
+const DEFAULT_SCAN_LIMIT = 100;
+const MAX_SCAN_LIMIT = 1000;
 const RUN_ID_RE = /^run_[A-Za-z0-9_]+$/;
 const STATUS_VALUES = new Set(["queued", "running", "done", "failed", "cancelled"]);
 const DEFAULT_HEALTH_TIME_ZONE = "UTC";
@@ -296,11 +298,27 @@ function isValidIsoDate(dateStr) {
 }
 
 /**
+ * Resolve the effective scan limit from plugin config or env.
+ * Config `scanLimit` takes precedence, then env, then default.
+ */
+function resolveScanLimit(cfg) {
+  const cfgLimit = typeof cfg?.scanLimit === "number" ? cfg.scanLimit : null;
+  if (cfgLimit !== null && cfgLimit > 0) {
+    return Math.min(cfgLimit, MAX_SCAN_LIMIT);
+  }
+  const envLimit = parseInt(process.env.RUN_VIEWER_SCAN_LIMIT ?? "", 10);
+  if (Number.isInteger(envLimit) && envLimit > 0) {
+    return Math.min(envLimit, MAX_SCAN_LIMIT);
+  }
+  return DEFAULT_SCAN_LIMIT;
+}
+
+/**
  * List run records from the store, newest first.
  * Scans date directories in reverse chronological order.
  */
 async function listRuns(runsDir, limit) {
-  const cap = Math.min(Math.max(1, limit), MAX_LIST_LIMIT);
+  const cap = Math.min(Math.max(1, limit), MAX_SCAN_LIMIT);
 
   let dateDirs;
   try {
@@ -707,6 +725,7 @@ function formatHealthSummary(summary) {
  *   "failed done"              → null  (duplicate status)
  *   "kind=a kind=b"            → null  (duplicate kind)
  *   "last=5 last=10"           → null  (duplicate last)
+ *   "offset=5 offset=10"       → null  (duplicate offset)
  */
 function parseListFilter(args) {
   const trimmed = (args ?? "").trim();
@@ -714,6 +733,7 @@ function parseListFilter(args) {
   let status = null;
   let kind = null;
   let last = null;
+  let offset = null;
 
   for (const token of tokens) {
     if (STATUS_VALUES.has(token)) {
@@ -732,14 +752,22 @@ function parseListFilter(args) {
           if (last !== null) return null; // duplicate last
           last = n;
         } else {
-          return null; // unrecognized token
+          const offsetMatch = token.match(/^offset=(\d+)$/);
+          if (offsetMatch) {
+            const n = Number(offsetMatch[1]);
+            if (!Number.isInteger(n) || n < 0) return null; // invalid value (negative)
+            if (offset !== null) return null; // duplicate offset
+            offset = n;
+          } else {
+            return null; // unrecognized token
+          }
         }
       }
     }
   }
 
-  if (status === null && kind === null && last === null) return null;
-  return { type: "compound", status, kind, last };
+  if (status === null && kind === null && last === null && offset === null) return null;
+  return { type: "compound", status, kind, last, offset };
 }
 
 /**
@@ -765,6 +793,7 @@ function parseSearchFilter(args) {
   let status = null;
   let kind = null;
   let last = null;
+  let offset = null;
 
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
@@ -775,10 +804,10 @@ function parseSearchFilter(args) {
       if (i >= tokens.length) return null; // no query token
 
       // The first token after "search" is always the query, even if it matches
-      // a status keyword (backward-compat). "search kind=...", "search last=..."
-      // and duplicate "search search" are still rejected.
+      // a status keyword (backward-compat). "search kind=...", "search last=...",
+      // "search offset=..." and duplicate "search search" are still rejected.
       const first = tokens[i];
-      if (first === "search" || /^kind=/.test(first) || /^last=/.test(first)) {
+      if (first === "search" || /^kind=/.test(first) || /^last=/.test(first) || /^offset=/.test(first)) {
         return null;
       }
       const queryTokens = [first];
@@ -787,7 +816,7 @@ function parseSearchFilter(args) {
       // Collect additional consecutive non-filter tokens as extra query keywords.
       while (i < tokens.length) {
         const t = tokens[i];
-        if (STATUS_VALUES.has(t) || /^kind=/.test(t) || /^last=/.test(t) || t === "search") {
+        if (STATUS_VALUES.has(t) || /^kind=/.test(t) || /^last=/.test(t) || /^offset=/.test(t) || t === "search") {
           break;
         }
         queryTokens.push(t);
@@ -821,11 +850,20 @@ function parseSearchFilter(args) {
       continue;
     }
 
+    const offsetMatch = token.match(/^offset=(\d+)$/);
+    if (offsetMatch) {
+      const n = Number(offsetMatch[1]);
+      if (!Number.isInteger(n) || n < 0) return null; // invalid value (negative)
+      if (offset !== null) return null; // duplicate offset
+      offset = n;
+      continue;
+    }
+
     return null;
   }
 
   if (query === null) return null;
-  return { type: "search", query, status, kind, last }; // query is string[]
+  return { type: "search", query, status, kind, last, offset }; // query is string[]
 }
 
 /**
@@ -878,7 +916,15 @@ async function handleRunsListQuery(ctx, querySpec) {
       ? cfg.listLimit
       : DEFAULT_LIST_LIMIT);
 
-  let filtered = await listRuns(runsDir, MAX_LIST_LIMIT);
+  const limit = querySpec.last ?? configLimit;
+  const start = querySpec.offset ?? 0;
+  const required = start + limit;
+  const effectiveScanLimit = Math.min(
+    Math.max(resolveScanLimit(cfg), required),
+    MAX_SCAN_LIMIT,
+  );
+
+  let filtered = await listRuns(runsDir, effectiveScanLimit);
 
   if (querySpec.query != null) {
     filtered = filtered.filter((run) => matchesRunSearch(run, querySpec.query));
@@ -890,14 +936,15 @@ async function handleRunsListQuery(ctx, querySpec) {
     filtered = filtered.filter((run) => run.kind === querySpec.kind);
   }
 
-  const limit = querySpec.last ?? configLimit;
-  const capped = filtered.slice(0, limit);
+  const end = start + limit;
+  const capped = filtered.slice(start, end);
 
   const parts = [];
   if (querySpec.query != null) parts.push(`search=${querySpec.query.join(" ")}`);
   if (querySpec.status) parts.push(`status=${querySpec.status}`);
   if (querySpec.kind) parts.push(`kind=${querySpec.kind}`);
   if (querySpec.last !== null) parts.push(`last=${querySpec.last}`);
+  if (querySpec.offset) parts.push(`offset=${querySpec.offset}`);
   return { text: formatRunList(capped, parts.join(" / ")) };
 }
 
@@ -914,9 +961,12 @@ async function handleRunsSearch(ctx, querySpec) {
 async function handleRunsList(ctx) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = resolveRunsDir(cfg);
-  const limit = typeof cfg.listLimit === "number" && cfg.listLimit > 0
-    ? cfg.listLimit
-    : DEFAULT_LIST_LIMIT;
+  const limit = Math.min(
+    typeof cfg.listLimit === "number" && cfg.listLimit > 0
+      ? cfg.listLimit
+      : DEFAULT_LIST_LIMIT,
+    MAX_LIST_LIMIT,
+  );
 
   const runs = await listRuns(runsDir, limit);
   return { text: formatRunList(runs) };
@@ -1093,6 +1143,9 @@ async function handleRunsCommand(ctx) {
       "• `/runs last=<n> <status>` — フィルタ後に件数指定 (例: last=5 failed)",
       "• `/runs last=<n> kind=<value>` — フィルタ後に件数指定 (例: last=10 kind=health)",
       "• `/runs last=<n> <status> kind=<value>` — 複合フィルタ後に件数指定 (例: last=5 failed kind=digest)",
+      "• `/runs offset=<n>` — 先頭 n 件をスキップしてページング (例: offset=10)",
+      "• `/runs offset=<n> last=<m>` — n 件スキップ後に m 件表示",
+      "• `/runs search <text...> offset=<n>` — 検索結果をページング (例: search health offset=5)",
     ].join("\n"),
   };
 }
@@ -1132,6 +1185,7 @@ export {
   resolveHealthRange,
   resolveHealthTimeZone,
   resolveRunsDir,
+  resolveScanLimit,
   summarizeRunsHealth,
   writeRunRecord,
 };

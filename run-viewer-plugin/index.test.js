@@ -777,44 +777,44 @@ test("handleRunsCommand health returns usage when explicit range contains invali
 
 test("parseListFilter recognizes all status values as compound filter", () => {
   for (const status of ["queued", "running", "done", "failed", "cancelled"]) {
-    assert.deepEqual(parseListFilter(status), { type: "compound", status, kind: null, last: null });
+    assert.deepEqual(parseListFilter(status), { type: "compound", status, kind: null, last: null, offset: null });
   }
 });
 
 test("parseListFilter recognizes kind= filter as compound filter", () => {
-  assert.deepEqual(parseListFilter("kind=health"), { type: "compound", status: null, kind: "health", last: null });
-  assert.deepEqual(parseListFilter("kind=digest"), { type: "compound", status: null, kind: "digest", last: null });
-  assert.deepEqual(parseListFilter("kind=free-form_task"), { type: "compound", status: null, kind: "free-form_task", last: null });
+  assert.deepEqual(parseListFilter("kind=health"), { type: "compound", status: null, kind: "health", last: null, offset: null });
+  assert.deepEqual(parseListFilter("kind=digest"), { type: "compound", status: null, kind: "digest", last: null, offset: null });
+  assert.deepEqual(parseListFilter("kind=free-form_task"), { type: "compound", status: null, kind: "free-form_task", last: null, offset: null });
 });
 
 test("parseListFilter recognizes last= filter", () => {
-  assert.deepEqual(parseListFilter("last=5"), { type: "compound", status: null, kind: null, last: 5 });
-  assert.deepEqual(parseListFilter("last=20"), { type: "compound", status: null, kind: null, last: 20 });
+  assert.deepEqual(parseListFilter("last=5"), { type: "compound", status: null, kind: null, last: 5, offset: null });
+  assert.deepEqual(parseListFilter("last=20"), { type: "compound", status: null, kind: null, last: 20, offset: null });
 });
 
 test("parseListFilter recognizes compound status + kind filter (order-independent)", () => {
   assert.deepEqual(
     parseListFilter("failed kind=digest"),
-    { type: "compound", status: "failed", kind: "digest", last: null },
+    { type: "compound", status: "failed", kind: "digest", last: null, offset: null },
   );
   assert.deepEqual(
     parseListFilter("kind=health done"),
-    { type: "compound", status: "done", kind: "health", last: null },
+    { type: "compound", status: "done", kind: "health", last: null, offset: null },
   );
 });
 
 test("parseListFilter recognizes last= combined with status or kind", () => {
   assert.deepEqual(
     parseListFilter("last=5 failed"),
-    { type: "compound", status: "failed", kind: null, last: 5 },
+    { type: "compound", status: "failed", kind: null, last: 5, offset: null },
   );
   assert.deepEqual(
     parseListFilter("kind=health last=2"),
-    { type: "compound", status: null, kind: "health", last: 2 },
+    { type: "compound", status: null, kind: "health", last: 2, offset: null },
   );
   assert.deepEqual(
     parseListFilter("failed kind=digest last=3"),
-    { type: "compound", status: "failed", kind: "digest", last: 3 },
+    { type: "compound", status: "failed", kind: "digest", last: 3, offset: null },
   );
 });
 
@@ -871,46 +871,46 @@ test("matchesRunSearch AND-matches all keywords", () => {
 test("parseSearchFilter recognizes search with optional filters", () => {
   assert.deepEqual(
     parseSearchFilter("search health"),
-    { type: "search", query: ["health"], status: null, kind: null, last: null },
+    { type: "search", query: ["health"], status: null, kind: null, last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health failed"),
-    { type: "search", query: ["health"], status: "failed", kind: null, last: null },
+    { type: "search", query: ["health"], status: "failed", kind: null, last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health kind=digest"),
-    { type: "search", query: ["health"], status: null, kind: "digest", last: null },
+    { type: "search", query: ["health"], status: null, kind: "digest", last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health failed kind=digest last=5"),
-    { type: "search", query: ["health"], status: "failed", kind: "digest", last: 5 },
+    { type: "search", query: ["health"], status: "failed", kind: "digest", last: 5, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("failed search health last=5"),
-    { type: "search", query: ["health"], status: "failed", kind: null, last: 5 },
+    { type: "search", query: ["health"], status: "failed", kind: null, last: 5, offset: null },
   );
 });
 
 test("parseSearchFilter recognizes multiple query keywords (AND search)", () => {
   assert.deepEqual(
     parseSearchFilter("search health check"),
-    { type: "search", query: ["health", "check"], status: null, kind: null, last: null },
+    { type: "search", query: ["health", "check"], status: null, kind: null, last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search api error failed"),
-    { type: "search", query: ["api", "error"], status: "failed", kind: null, last: null },
+    { type: "search", query: ["api", "error"], status: "failed", kind: null, last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health check kind=digest"),
-    { type: "search", query: ["health", "check"], status: null, kind: "digest", last: null },
+    { type: "search", query: ["health", "check"], status: null, kind: "digest", last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search health check failed kind=digest last=3"),
-    { type: "search", query: ["health", "check"], status: "failed", kind: "digest", last: 3 },
+    { type: "search", query: ["health", "check"], status: "failed", kind: "digest", last: 3, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("failed search health check last=5"),
-    { type: "search", query: ["health", "check"], status: "failed", kind: null, last: 5 },
+    { type: "search", query: ["health", "check"], status: "failed", kind: null, last: 5, offset: null },
   );
 });
 
@@ -927,24 +927,24 @@ test("parseSearchFilter allows status keywords as search query", () => {
   // even when it matches a status keyword.
   assert.deepEqual(
     parseSearchFilter("search failed"),
-    { type: "search", query: ["failed"], status: null, kind: null, last: null },
+    { type: "search", query: ["failed"], status: null, kind: null, last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search done"),
-    { type: "search", query: ["done"], status: null, kind: null, last: null },
+    { type: "search", query: ["done"], status: null, kind: null, last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search failed kind=digest"),
-    { type: "search", query: ["failed"], status: null, kind: "digest", last: null },
+    { type: "search", query: ["failed"], status: null, kind: "digest", last: null, offset: null },
   );
   assert.deepEqual(
     parseSearchFilter("search failed last=5"),
-    { type: "search", query: ["failed"], status: null, kind: null, last: 5 },
+    { type: "search", query: ["failed"], status: null, kind: null, last: 5, offset: null },
   );
   // status keyword as query, different status keyword as filter
   assert.deepEqual(
     parseSearchFilter("search failed done"),
-    { type: "search", query: ["failed"], status: "done", kind: null, last: null },
+    { type: "search", query: ["failed"], status: "done", kind: null, last: null, offset: null },
   );
 });
 
@@ -1781,5 +1781,217 @@ test("handleRunsCommand existing /runs list behavior is unchanged by filter addi
     assert.match(result.text, /直近の run 記録/);
     assert.match(result.text, /run_20260415_010001_aaa/);
     assert.match(result.text, /run_20260415_010002_bbb/);
+  });
+});
+
+// ── parseListFilter offset tests ───────────────────────────────────────────────
+
+test("parseListFilter recognizes offset= token alone", () => {
+  assert.deepEqual(parseListFilter("offset=10"), { type: "compound", status: null, kind: null, last: null, offset: 10 });
+  assert.deepEqual(parseListFilter("offset=0"), { type: "compound", status: null, kind: null, last: null, offset: 0 });
+});
+
+test("parseListFilter recognizes offset= combined with status", () => {
+  assert.deepEqual(
+    parseListFilter("failed offset=10"),
+    { type: "compound", status: "failed", kind: null, last: null, offset: 10 },
+  );
+});
+
+test("parseListFilter recognizes offset= combined with kind=", () => {
+  assert.deepEqual(
+    parseListFilter("offset=10 kind=health"),
+    { type: "compound", status: null, kind: "health", last: null, offset: 10 },
+  );
+});
+
+test("parseListFilter rejects duplicate offset tokens", () => {
+  assert.equal(parseListFilter("offset=5 offset=10"), null);
+});
+
+test("parseListFilter rejects negative offset", () => {
+  assert.equal(parseListFilter("offset=-1"), null);
+});
+
+test("parseListFilter rejects non-integer offset", () => {
+  assert.equal(parseListFilter("offset=abc"), null);
+});
+
+test("parseListFilter recognizes offset= combined with last=", () => {
+  assert.deepEqual(
+    parseListFilter("offset=10 last=5"),
+    { type: "compound", status: null, kind: null, last: 5, offset: 10 },
+  );
+});
+
+// ── parseSearchFilter offset tests ────────────────────────────────────────────
+
+test("parseSearchFilter recognizes offset= modifier", () => {
+  assert.deepEqual(
+    parseSearchFilter("search health offset=5"),
+    { type: "search", query: ["health"], status: null, kind: null, last: null, offset: 5 },
+  );
+});
+
+test("parseSearchFilter recognizes offset= combined with last=", () => {
+  assert.deepEqual(
+    parseSearchFilter("search health offset=5 last=3"),
+    { type: "search", query: ["health"], status: null, kind: null, last: 3, offset: 5 },
+  );
+});
+
+test("parseSearchFilter rejects duplicate offset tokens", () => {
+  assert.equal(parseSearchFilter("search health offset=5 offset=10"), null);
+});
+
+// ── E2E tests for handleRunsCommand with offset= ──────────────────────────────
+
+// Helper: write N runs for offset E2E tests.
+// run_20260415_000001_tst is oldest (i=1), run_20260415_000020_tst is newest (i=20).
+async function writeOffsetRuns(runsDir, count = 20, overrides = () => ({})) {
+  for (let i = 1; i <= count; i++) {
+    const n = String(i).padStart(6, "0");
+    const runId = `run_20260415_${n}_tst`;
+    const queuedAt = `2026-04-15T00:${String(Math.floor((i - 1) / 60)).padStart(2, "0")}:${String((i - 1) % 60).padStart(2, "0")}Z`;
+    await writeRun(runsDir, makeRecord({
+      run_id: runId,
+      queued_at: queuedAt,
+      ...overrides(i),
+    }));
+  }
+}
+
+test("/runs offset=10 skips 10 newest and shows runs 10 down to 1", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeOffsetRuns(runsDir, 20);
+
+    // Newest=run_20260415_000020_tst, oldest=run_20260415_000001_tst
+    // offset=10, listLimit=10 → slice(10, 20) of newest-first list → runs 10..1
+    const result = await handleRunsCommand(makeContext(runsDir, "offset=10", 10));
+
+    assert.match(result.text, /run_20260415_000010_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000020_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000011_tst/);
+  });
+});
+
+test("/runs offset=10 last=5 shows runs 10 down to 6", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeOffsetRuns(runsDir, 20);
+
+    // offset=10, last=5 → slice(10, 15) → runs 10..6
+    const result = await handleRunsCommand(makeContext(runsDir, "offset=10 last=5", 10));
+
+    assert.match(result.text, /run_20260415_000010_tst/);
+    assert.match(result.text, /run_20260415_000006_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000011_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000005_tst/);
+  });
+});
+
+test("/runs search ordinary offset=5 skips 5 newest matching runs", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeOffsetRuns(runsDir, 20, () => ({ normalized_task: "ordinary" }));
+
+    // All 20 match "ordinary", offset=5 skips newest 5, shows runs 15..6 (limited by listLimit=10)
+    const result = await handleRunsCommand(makeContext(runsDir, "search ordinary offset=5", 10));
+
+    assert.match(result.text, /run_20260415_000015_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000020_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000016_tst/);
+  });
+});
+
+test("/runs search ordinary offset=10 last=3 shows runs 10..8", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    await writeOffsetRuns(runsDir, 20, () => ({ normalized_task: "ordinary" }));
+
+    // offset=10, last=3 → slice(10, 13) → runs 10, 9, 8
+    const result = await handleRunsCommand(makeContext(runsDir, "search ordinary offset=10 last=3", 10));
+
+    assert.match(result.text, /run_20260415_000010_tst/);
+    assert.match(result.text, /run_20260415_000008_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000007_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000011_tst/);
+  });
+});
+
+test("/runs failed offset=5 skips 5 newest failed runs", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    // Runs 1–10: failed, runs 11–20: done
+    await writeOffsetRuns(runsDir, 20, (i) => ({
+      status: i <= 10 ? "failed" : "done",
+      result: i <= 10 ? null : undefined,
+      error: i <= 10 ? { message: `failed ${i}` } : null,
+    }));
+
+    // failed filter gives 10 runs (10..1 newest-first), offset=5 → slice(5,15) → runs 5..1
+    const result = await handleRunsCommand(makeContext(runsDir, "failed offset=5", 10));
+
+    assert.match(result.text, /run_20260415_000005_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000010_tst/);
+    assert.doesNotMatch(result.text, /run_20260415_000006_tst/);
+  });
+});
+
+test("scanLimit auto-expansion: offset+last exceeding scanLimit still finds the run", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    // Write 25 runs; run #1 (oldest) has a unique task
+    await writeOffsetRuns(runsDir, 25, (i) => ({
+      normalized_task: i === 1 ? "unique_offset_task" : "ordinary",
+    }));
+
+    // scanLimit=20, offset=15, last=10 → required=25 > 20
+    // Auto-expand: effectiveScanLimit = min(max(20, 25), 1000) = 25
+    // run #1 is at position 24 (0-indexed) in newest-first list
+    // With search filter on "unique_offset_task" + offset=15 last=10:
+    // Only 1 run matches; that run is at position 0 in filtered list, which is < slice(15,25)
+    // Actually let's use all 25 with ordinary + search unique_offset_task:
+    // The unique run is position 0 in unfiltered but we need it at offset 15 of filtered...
+    // Let's try a simpler approach: use offset=15 on all 25 runs (no search), with scanLimit=20
+    // Without expansion: only first 20 read → run #1 (at pos 24) missed
+    // With expansion: all 25 read → run #1 at pos 24 → slice(15,25) includes pos 15..24 → includes run #1
+    const ctx = makeContext(runsDir, "offset=15 last=10", 10, {
+      config: {
+        plugins: {
+          entries: {
+            "run-viewer": {
+              config: {
+                scanLimit: 20,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const result = await handleRunsCommand(ctx);
+
+    // run_20260415_000001_tst is the oldest (position 24 in newest-first)
+    // slice(15, 25) covers positions 15..24, so it should appear
+    assert.match(result.text, /run_20260415_000001_tst/);
+  });
+});
+
+// ── Regression: no-offset queries unchanged ───────────────────────────────────
+
+test("offset=0 produces same output as no offset specified", async () => {
+  await withTempRunsDir(async (runsDir) => {
+    for (let i = 1; i <= 5; i++) {
+      const sec = String(i).padStart(2, "0");
+      await writeRun(runsDir, makeRecord({
+        run_id: `run_20260415_0600${sec}_${String(i).padStart(3, "0")}`,
+        queued_at: `2026-04-15T06:00:${sec}Z`,
+        normalized_task: "health",
+      }));
+    }
+
+    const withoutOffset = await handleRunsCommand(makeContext(runsDir, "search health", 10));
+    const withZeroOffset = await handleRunsCommand(makeContext(runsDir, "search health offset=0", 10));
+
+    // Both should show the same runs
+    const withoutLines = withoutOffset.text.split("\n").filter((line) => line.includes("`run_"));
+    const withZeroLines = withZeroOffset.text.split("\n").filter((line) => line.includes("`run_"));
+    assert.deepEqual(withoutLines, withZeroLines);
   });
 });
