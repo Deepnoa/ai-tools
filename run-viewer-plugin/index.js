@@ -755,7 +755,6 @@ function parseListFilter(args) {
           const offsetMatch = token.match(/^offset=(\d+)$/);
           if (offsetMatch) {
             const n = Number(offsetMatch[1]);
-            if (!Number.isInteger(n) || n < 0) return null; // invalid value (negative)
             if (offset !== null) return null; // duplicate offset
             offset = n;
           } else {
@@ -853,7 +852,6 @@ function parseSearchFilter(args) {
     const offsetMatch = token.match(/^offset=(\d+)$/);
     if (offsetMatch) {
       const n = Number(offsetMatch[1]);
-      if (!Number.isInteger(n) || n < 0) return null; // invalid value (negative)
       if (offset !== null) return null; // duplicate offset
       offset = n;
       continue;
