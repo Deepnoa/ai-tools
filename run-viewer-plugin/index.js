@@ -658,47 +658,54 @@ function formatHealthSummary(summary) {
     summary.overallStatus === "degraded" ? "⚠️"
     : summary.overallStatus === "active" ? "🔄"
     : "✅";
-  const statusDetail =
-    summary.overallStatus === "degraded"
-      ? `failed=${summary.failedCount} in ${summary.date}`
-      : summary.overallStatus === "active"
-        ? [
-            summary.counts.queued > 0 ? `queued=${summary.counts.queued}` : null,
-            summary.counts.running > 0 ? `running=${summary.counts.running}` : null,
-          ].filter(Boolean).join(" | ")
-        : `failed=${summary.failedCount}`;
 
-  lines.push(`${overallEmoji} *run health (${summary.date})*`);
-  if (summary.timeZone) {
-    lines.push(`timezone: ${summary.timeZone}`);
+  // Header: period + timezone on one line
+  const tzPart = summary.timeZone ? `  · ${summary.timeZone}` : "";
+  lines.push(`${overallEmoji} *run health (${summary.date})*${tzPart}`);
+
+  // Status: compact, no redundant period repetition
+  if (summary.overallStatus === "degraded") {
+    lines.push(`status: degraded · failed=${summary.failedCount}`);
+  } else if (summary.overallStatus === "active") {
+    const activeParts = [];
+    if (summary.counts.queued > 0) activeParts.push(`queued=${summary.counts.queued}`);
+    if (summary.counts.running > 0) activeParts.push(`running=${summary.counts.running}`);
+    lines.push(`status: active · ${activeParts.join(" | ")}`);
+  } else {
+    lines.push(`status: ok`);
   }
-  if (statusDetail) {
-    lines.push(`status: ${summary.overallStatus} (${statusDetail})`);
-  }
+
+  // Counts: done/failed first, total merged on same line
   lines.push(
-    `queued: ${summary.counts.queued} | running: ${summary.counts.running} | done: ${summary.counts.done} | failed: ${summary.counts.failed} | cancelled: ${summary.counts.cancelled}`,
+    `done: ${summary.counts.done} | failed: ${summary.counts.failed} | running: ${summary.counts.running} | queued: ${summary.counts.queued} | cancelled: ${summary.counts.cancelled} | total: ${summary.total}`,
   );
-  lines.push(`total: ${summary.total}`);
 
+  // Daily breakdown (multi-day only): emoji per day, skip zero-count fields
   if ((summary.dailyCounts?.length ?? 0) > 1) {
     lines.push("");
-    lines.push("*daily summary:*");
+    lines.push("*daily breakdown:*");
     for (const day of summary.dailyCounts) {
-      const parts = [
-        `done=${day.counts.done}`,
-        `failed=${day.counts.failed}`,
-      ];
+      const dayEmoji =
+        day.counts.failed > 0 ? "⚠️"
+        : day.counts.running > 0 || day.counts.queued > 0 ? "🔄"
+        : "✅";
+      const parts = [];
+      if (day.counts.done > 0) parts.push(`done=${day.counts.done}`);
+      if (day.counts.failed > 0) parts.push(`failed=${day.counts.failed}`);
       if (day.counts.running > 0) parts.push(`running=${day.counts.running}`);
       if (day.counts.queued > 0) parts.push(`queued=${day.counts.queued}`);
       if (day.counts.cancelled > 0) parts.push(`cancelled=${day.counts.cancelled}`);
-      lines.push(`${day.date}: ${parts.join(" | ")}`);
+      const dayDetail = parts.length > 0 ? parts.join("  ") : "no runs";
+      lines.push(`${dayEmoji} ${day.date}  ${dayDetail}`);
     }
   }
 
+  // Latest failed: time on same line as run_id
   if (summary.latestFailed) {
     lines.push("");
-    lines.push(`*最新 failed:* \`${summary.latestFailed.run_id}\` (${summary.latestFailed.kind ?? "unknown"})`);
-    lines.push(`時刻: ${summary.latestFailed.queued_at ?? "—"}`);
+    const failTime = summary.latestFailed.queued_at?.slice(11, 19) ?? null;
+    const timePart = failTime ? `  — ${failTime}` : "";
+    lines.push(`*最新 failed:* \`${summary.latestFailed.run_id}\` (${summary.latestFailed.kind ?? "unknown"})${timePart}`);
     const errorMessage = summary.latestFailed.error?.message ?? "詳細不明";
     lines.push(`エラー: ${errorMessage}`);
     lines.push(`_詳細: \`/runs ${summary.latestFailed.run_id}\`_`);
