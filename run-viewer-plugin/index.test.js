@@ -95,6 +95,8 @@ function getRunsHandler() {
     registerCommand(command) {
       commands.push(command);
     },
+    // Stub for the Office UI HTTP route registered alongside the slash command.
+    registerHttpRoute() {},
   });
   const runs = commands.find((command) => command.name === "runs");
   assert.ok(runs, "runs command should be registered");

@@ -1177,6 +1177,75 @@ const plugin = {
       acceptsArgs: true,
       handler: handleRunsCommand,
     });
+
+    // ── Office UI integration ────────────────────────────────────────────────
+    // GET /plugins/run-viewer/runs?text=<args>
+    //
+    // Exposes the same run-viewer logic used by slash commands as a gateway-
+    // authenticated HTTP endpoint for the Deepnoa-Office-UI internal-state
+    // Runs panel.  auth:"gateway" means the gateway validates the Bearer token
+    // before the request reaches this handler.
+    //
+    // Response shape:
+    //   { ok: true,  text: string, command: string }  — 200 on success
+    //   { ok: false, error: string }                  — 405 / 500 on error
+    //
+    // text=<args> maps 1-to-1 onto the args passed to /runs:
+    //   text=last=5        →  /runs last=5
+    //   text=health+7d     →  /runs health 7d
+    //   text=run_20260420… →  /runs run_20260420…
+    api.registerHttpRoute({
+      path: "/plugins/run-viewer/runs",
+      auth: "gateway",
+      match: "exact",
+      handler: async (req, res) => {
+        try {
+          if (req.method !== "GET") {
+            res.writeHead(405, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Method Not Allowed" }));
+            return true;
+          }
+
+          const urlObj = new URL(req.url, "http://localhost");
+          const text = urlObj.searchParams.get("text") ?? "";
+
+          // Load the full openclaw config so plugin cfg (runsDir, listLimit,
+          // scanLimit, healthTimeZone, …) is respected.  Falls back to
+          // env-var / built-in defaults when the config file is unavailable.
+          const configPath =
+            process.env.OPENCLAW_CONFIG_PATH?.trim() ||
+            path.join(os.homedir(), ".openclaw", "openclaw.json");
+          let fullConfig = {};
+          try {
+            const raw = await fs.readFile(configPath, "utf-8");
+            fullConfig = JSON.parse(raw);
+          } catch {
+            // Config unreadable — handleRunsCommand falls back to env vars and defaults.
+          }
+
+          const ctx = { args: text, config: fullConfig };
+          const result = await handleRunsCommand(ctx);
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ok: true,
+              text: result.text,
+              command: `/runs ${text}`.trimEnd(),
+            }),
+          );
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ok: false,
+              error: String(err?.message ?? "internal error"),
+            }),
+          );
+        }
+        return true;
+      },
+    });
   },
 };
 
