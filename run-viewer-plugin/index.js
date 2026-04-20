@@ -915,10 +915,13 @@ function matchesRunSearch(run, queries) {
 async function handleRunsListQuery(ctx, querySpec) {
   const cfg = ctx.config?.plugins?.entries?.["run-viewer"]?.config ?? {};
   const runsDir = querySpec.runsDir ?? resolveRunsDir(cfg);
-  const configLimit = querySpec.configLimit ??
-    (typeof cfg.listLimit === "number" && cfg.listLimit > 0
-      ? cfg.listLimit
-      : DEFAULT_LIST_LIMIT);
+  const configLimit = Math.min(
+    querySpec.configLimit ??
+      (typeof cfg.listLimit === "number" && cfg.listLimit > 0
+        ? cfg.listLimit
+        : DEFAULT_LIST_LIMIT),
+    MAX_LIST_LIMIT,
+  );
 
   const limit = querySpec.last ?? configLimit;
   const start = querySpec.offset ?? 0;
