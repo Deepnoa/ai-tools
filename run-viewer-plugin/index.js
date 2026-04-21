@@ -1207,7 +1207,6 @@ const plugin = {
           }
 
           const urlObj = new URL(req.url, "http://localhost");
-          const text = urlObj.searchParams.get("text") ?? "";
 
           // Load the full openclaw config so plugin cfg (runsDir, listLimit,
           // scanLimit, healthTimeZone, …) is respected.  Falls back to
@@ -1220,9 +1219,80 @@ const plugin = {
             const raw = await fs.readFile(configPath, "utf-8");
             fullConfig = JSON.parse(raw);
           } catch {
-            // Config unreadable — handleRunsCommand falls back to env vars and defaults.
+            // Config unreadable — falls back to env vars and built-in defaults.
           }
 
+          const format = urlObj.searchParams.get("format") ?? "";
+
+          // ── JSON mode ────────────────────────────────────────────────────────
+          // ?format=json returns raw run records (full JSON) rather than display text.
+          // Used by RunsAdapter.fetch_recent_json() / fetch_detail_json() so that
+          // the Office UI can maintain full response-shape compatibility.
+          //
+          //   ?format=json&mode=list[&limit=N][&status=S][&date=YYYY-MM-DD]
+          //     → { ok: true, runs: [...], total: N }
+          //   ?format=json&mode=detail&run_id=ID
+          //     → { ok: true, run: {...} }  or  404 { ok: false, error: "not_found" }
+          if (format === "json") {
+            const cfg = fullConfig?.plugins?.entries?.["run-viewer"]?.config ?? {};
+            const runsDir = resolveRunsDir(cfg);
+            const mode = urlObj.searchParams.get("mode") ?? "list";
+
+            if (mode === "detail") {
+              const runId = urlObj.searchParams.get("run_id") ?? "";
+              if (!runId || !RUN_ID_RE.test(runId)) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, error: "invalid_run_id" }));
+                return true;
+              }
+              const run = await findRunById(runsDir, runId);
+              if (!run) {
+                res.writeHead(404, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, error: "not_found" }));
+                return true;
+              }
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: true, run }));
+              return true;
+            }
+
+            // mode === "list" (default)
+            const rawLimit = urlObj.searchParams.get("limit") ?? "";
+            const parsedLimit = rawLimit ? parseInt(rawLimit, 10) : 0;
+            const limit = Math.min(
+              Math.max(1, Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : DEFAULT_LIST_LIMIT),
+              MAX_SCAN_LIMIT, // allow up to 1000 for JSON mode; caller controls actual cap
+            );
+            const statusFilter = urlObj.searchParams.get("status")?.trim() || null;
+            const dateFilter = urlObj.searchParams.get("date")?.trim() || null;
+
+            let runs;
+            if (dateFilter && /^\d{4}-\d{2}-\d{2}$/.test(dateFilter)) {
+              // Date-scoped scan: load only that day's directory.
+              const scanLimit = statusFilter ? limit * 4 : limit;
+              runs = await loadRunsForDate(runsDir, dateFilter, scanLimit);
+              if (statusFilter) {
+                runs = runs.filter((r) => r.status === statusFilter);
+              }
+              runs = runs.slice(0, limit);
+            } else {
+              // Full scan with optional status filter.
+              const scanLimit = statusFilter ? Math.min(limit * 4, MAX_SCAN_LIMIT) : limit;
+              runs = await listRuns(runsDir, scanLimit);
+              if (statusFilter) {
+                runs = runs.filter((r) => r.status === statusFilter);
+              }
+              runs = runs.slice(0, limit);
+            }
+
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true, runs, total: runs.length }));
+            return true;
+          }
+
+          // ── Display-text mode (default) ──────────────────────────────────────
+          // ?text=<args> delegates to handleRunsCommand and returns formatted text.
+          const text = urlObj.searchParams.get("text") ?? "";
           const ctx = { args: text, config: fullConfig };
           const result = await handleRunsCommand(ctx);
 
