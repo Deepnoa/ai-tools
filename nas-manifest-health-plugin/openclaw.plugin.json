@@ -1,0 +1,19 @@
+{
+  "id": "nas-manifest-health",
+  "name": "NAS Manifest Health",
+  "description": "Read-only proof tool for the Deepnoa rag-safe NAS manifest.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "root": {
+        "type": "string",
+        "description": "NAS root path. Default: /mnt/nas"
+      },
+      "manifestPath": {
+        "type": "string",
+        "description": "Manifest path relative to NAS root."
+      }
+    }
+  }
+}
