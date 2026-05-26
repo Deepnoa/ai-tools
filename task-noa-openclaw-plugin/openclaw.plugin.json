@@ -1,5 +1,27 @@
 {
   "id": "task-noa-tools",
+  "name": "Task-Noa Tools",
+  "description": "Task-Noa AI API bridge for Openclaw.",
+  "contracts": {
+    "tools": [
+      "get_monthly_sales",
+      "get_unpaid_invoices",
+      "get_cash_balance",
+      "get_recent_journals",
+      "list_recent_captures",
+      "get_capture_by_id",
+      "get_latest_capture_by_entity_type"
+    ]
+  },
+  "toolMetadata": {
+    "get_monthly_sales": { "optional": true },
+    "get_unpaid_invoices": { "optional": true },
+    "get_cash_balance": { "optional": true },
+    "get_recent_journals": { "optional": true },
+    "list_recent_captures": { "optional": true },
+    "get_capture_by_id": { "optional": true },
+    "get_latest_capture_by_entity_type": { "optional": true }
+  },
   "uiHints": {
     "baseUrl": {
       "label": "Task-Noa Base URL",
@@ -20,21 +42,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": {
-        "type": "boolean"
-      },
-      "baseUrl": {
-        "type": "string"
-      },
-      "apiToken": {
-        "type": "string"
-      },
-      "timeoutMs": {
-        "type": "number"
-      },
-      "defaultCurrency": {
-        "type": "string"
-      }
+      "enabled": { "type": "boolean" },
+      "baseUrl": { "type": "string" },
+      "apiToken": { "type": "string" },
+      "timeoutMs": { "type": "number" },
+      "defaultCurrency": { "type": "string" }
     }
   }
 }
